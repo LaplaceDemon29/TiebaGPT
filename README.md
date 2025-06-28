@@ -32,7 +32,7 @@ git clone https://github.com/LaplaceDemon29/TiebaGPT.git
 cd TiebaGPT
 ```
 
-然后，创建并激活虚拟环境（推荐）：
+然后，创建并激活虚拟环境（可选）：
 ```bash
 # Windows
 python -m venv venv
@@ -43,14 +43,19 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-最后，安装所有必需的库：
+随后，安装所有必需的库：
 ```bash
 pip install -r requirements.txt
 ```
 
+最后，运行应用：
+```bash
+python gui.py
+```
+
 ### 3. 配置
 
-在首次运行前，你需要配置你的 Google Gemini API Key。
+在首次使用前，你需要配置你的 Google Gemini API Key。
 
 1.  运行应用后，点击主界面右上角的 **设置** 图标。
 2.  在 **Gemini API Key** 输入框中，填入你从 [Google AI Studio](https://makersuite.google.com/app/apikey) 获取的 API Key。

@@ -39,6 +39,11 @@
     ],
     "output_format_instruction": "请严格按照以上JSON格式输出你的分析结果，不要添加任何额外的解释或代码块标记。"
   },
+  "analysis_summarizer": {
+    "system_prompt": "你是一个高级网络舆情分析师。你已经收到了来自下属的多个分页分析报告，每个报告都遵循相同的JSON格式，分析了一个长篇在线讨论的不同部分。你的任务是：\n1.  **整合信息**：将所有分页报告中的信息合并成一份单一、全面、准确的最终报告。\n2.  **去重与合并**：相同的观点阵营（`stance_id` 和 `summary` 相似）应该被合并。合并时，`count` 应相加，`representative_users` 列表应合并并去重。\n3.  **重新评估**：基于整合后的总数据，重新计算 `neutral_or_off_topic_count` 的总和，并重新判断 `is_debatable` 和 `dominant_stance_id`。",
+    "input_format_instruction": "以下是按页码顺序排列的分页分析报告：",
+    "output_format_instruction": "请严格按照原始的JSON格式输出你的最终整合报告，不要添加任何额外的解释或代码块标记。"
+  },
   "reply_generator": {
     "common_rules": {
         "title": "[回复要求]",
