@@ -127,17 +127,27 @@ async def search_threads_by_page(client: tb.Client, tieba_name: str, query: str,
         return await client.search_exact(tieba_name, query, pn=page_num, only_thread=True)
     except Exception as e: await log_callback(f"搜索关键词“{query}”失败: {e}"); return []
 
-async def fetch_full_thread_data(client: tb.Client, tid: int, log_callback: typing.Callable, page_num: int = 1) -> tuple[typing.Optional[tb_typing.Thread], list[tb_typing.Post], dict[int, list[tb_typing.Comment]]]:
+async def fetch_full_thread_data(client: tb.Client, tid: int, log_callback: typing.Callable, page_num: int = 1) -> tuple[typing.Optional[tb_typing.Thread], typing.Optional[tb_typing.Posts], dict[int, list[tb_typing.Comment]]]:
     await log_callback(f"正在获取帖子 {tid} 第 {page_num} 页的数据...")
-    posts: list[tb_typing.Post] = await client.get_posts(tid, pn=page_num, rn=POSTS_PER_PAGE)
-    if not posts: return None, [], {}
-    thread_obj = posts.thread
+    
+    posts_obj: tb_typing.Posts = await client.get_posts(tid, pn=page_num, rn=POSTS_PER_PAGE)
+    
+    if not posts_obj:
+        return None, None, {}
+    
+    thread_obj = posts_obj.thread
     all_comments: dict[int, list[tb_typing.Comment]] = {}
-    results = await asyncio.gather(*[client.get_comments(tid, post.pid) for post in posts], return_exceptions=True)
-    for post, comments_or_exc in zip(posts, results):
-        if isinstance(comments_or_exc, Exception): await log_callback(f"  - 获取回复(pid: {post.pid})的楼中楼失败: {comments_or_exc}")
-        elif comments_or_exc: all_comments[post.pid] = comments_or_exc
-    return thread_obj, posts, all_comments
+    
+    post_list = posts_obj.objs
+    
+    results = await asyncio.gather(*[client.get_comments(tid, post.pid) for post in post_list], return_exceptions=True)
+    for post, comments_or_exc in zip(post_list, results):
+        if isinstance(comments_or_exc, Exception):
+            pass
+        elif comments_or_exc:
+            all_comments[post.pid] = comments_or_exc
+            
+    return thread_obj, posts_obj, all_comments
 
 def format_contents(contents: tb_typing.contents) -> str:
     if not contents or not contents.objs: return ""
@@ -154,24 +164,31 @@ def format_contents(contents: tb_typing.contents) -> str:
 
 def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post], all_comments: dict[int, list[tb_typing.Comment]]) -> str:
     formatted_list = []
-    # 主楼内容只在最开始添加一次
-    if thread:
-        formatted_list.extend([f"[帖子标题]: {thread.title}", f"[主楼内容]\n{format_contents(thread.contents)}", "---", "[讨论区]"])
-    
+    if posts:
+        formatted_list.append("---")
+        formatted_list.append("[讨论区]")
+
     for post in posts:
-        if post.floor == 1 and posts[0].floor == 1: continue 
+        if post.floor == 1:
+            continue
+        
         post_text = format_contents(post.contents).strip()
-        if not post_text: continue
+        if not post_text:
+            continue
+            
         user_name = post.user.user_name if post.user and hasattr(post.user, 'user_name') else '未知用户'
         formatted_list.append(f"\n[回复 {post.floor}楼] (用户: {user_name})")
         formatted_list.append(post_text)
+        
         if post.pid in all_comments:
             for j, comment in enumerate(all_comments[post.pid]):
                 comment_text = format_contents(comment.contents).strip()
-                if not comment_text: continue
+                if not comment_text:
+                    continue
                 comment_user_name = comment.user.user_name if comment.user and hasattr(comment.user, 'user_name') else '未知用户'
                 formatted_list.append(f"  [楼中楼 to {post.floor}楼, #{j+1}] (用户: {comment_user_name})")
                 formatted_list.append(f"  > {comment_text}")
+                
     return "\n".join(formatted_list)
 
 async def _analyze_single_chunk(gemini_client: genai.Client, discussion_text: str, model_name: str, log_callback: typing.Callable) -> dict:
@@ -206,6 +223,8 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
     thread_obj, _, _ = await fetch_full_thread_data(tieba_client, tid, log_callback, page_num=1)
     if not thread_obj:
         return {"error": "无法获取帖子主楼信息，分析中止。"}
+    
+    main_post_text = f"[帖子标题]: {thread_obj.title}\n[主楼内容]\n{format_contents(thread_obj.contents)}"
 
     total_chunks = (total_pages + PAGES_PER_API_CALL - 1) // PAGES_PER_API_CALL
     current_chunk = 0
@@ -215,24 +234,25 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
         page_start = i
         page_end = min(i + PAGES_PER_API_CALL - 1, total_pages)
         
-        await progress_callback(current_chunk, total_chunks, page_start, page_end) # 更新进度回调参数
+        await progress_callback(current_chunk, total_chunks, page_start, page_end)
         
-        chunk_posts = []
+        chunk_posts_list = []
         chunk_comments = {}
         for page_num in range(page_start, page_end + 1):
             await log_callback(f"  正在获取第 {page_num} 页内容...")
-            _, posts, comments = await fetch_full_thread_data(tieba_client, tid, log_callback, page_num=page_num)
-            if posts:
-                chunk_posts.extend(posts)
+            _, posts_obj, comments = await fetch_full_thread_data(tieba_client, tid, log_callback, page_num=page_num)
+            if posts_obj and posts_obj.objs:
+                chunk_posts_list.extend(posts_obj.objs)
                 chunk_comments.update(comments)
         
-        if not chunk_posts:
+        if not chunk_posts_list:
             await log_callback(f"警告：块 {current_chunk} (页 {page_start}-{page_end}) 没有获取到内容，跳过。")
             continue
         
-        discussion_text = format_discussion_text(thread_obj, chunk_posts, chunk_comments)
-        
-        chunk_result = await _analyze_single_chunk(gemini_client, discussion_text, model_name, log_callback)
+        discussion_part_text = format_discussion_text(None, chunk_posts_list, chunk_comments) # 传入 thread=None
+        full_discussion_text = f"{main_post_text}\n{discussion_part_text}"
+
+        chunk_result = await _analyze_single_chunk(gemini_client, full_discussion_text, model_name, log_callback)
         if "error" not in chunk_result:
             chunk_analyses.append(chunk_result)
         else:

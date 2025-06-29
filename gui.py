@@ -270,39 +270,99 @@ class TiebaGPTApp:
     async def select_thread(self, e):
         self.thread_list_scroll_offset = self.page.scroll.get(self.thread_list_view.uid, ft.ScrollMetrics(0,0,0)).offset if self.page.scroll else 0.0
         self.selected_thread = e.control.data
-        self.current_post_page = 1; self.total_post_pages = 1; self.current_analysis_tid = None
+
+        self.current_post_page = 1
+        self.total_post_pages = 1
+        self.current_analysis_tid = None
+    
         self.view_container.controls = [self.build_analysis_view()]
         self.progress_ring.visible = True
-        self.preview_display.controls.clear(); self.preview_display.controls.append(ft.Row([ft.ProgressRing(), ft.Text("正在加载帖子内容...")], alignment=ft.MainAxisAlignment.CENTER))
+        self.preview_display.controls.clear()
+        self.preview_display.controls.append(ft.Row([ft.ProgressRing(), ft.Text("正在初始化帖子视图...")], alignment=ft.MainAxisAlignment.CENTER))
         self.page.update()
         if self.selected_thread.tid in self.analysis_cache:
             await self.log_message(f"从缓存加载TID {self.selected_thread.tid}的完整分析结果。")
             cached_result = self.analysis_cache[self.selected_thread.tid]
             analysis_str = f"## 讨论状况分析结果 (缓存)\n```json\n{json.dumps(cached_result, ensure_ascii=False, indent=2)}\n```"
-            self.analysis_display.value = analysis_str; self.current_analysis_tid = self.selected_thread.tid
-        else: self.analysis_display.value = "点击“分析整个帖子”按钮以开始"
+            self.analysis_display.value = analysis_str
+            self.current_analysis_tid = self.selected_thread.tid
+        else:
+            self.analysis_display.value = "点击“分析整个帖子”按钮以开始"
+        
         can_generate = self.current_analysis_tid == self.selected_thread.tid
-        self.mode_selector.disabled = not can_generate; self.generate_button.disabled = not can_generate; self.analyze_button.disabled = False
-        await self._load_and_display_post_page()
-        self.progress_ring.visible = False; self.page.update()
+        self.mode_selector.disabled = not can_generate
+        self.generate_button.disabled = not can_generate
+        self.analyze_button.disabled = False
+        await self._initialize_and_load_first_post_page()
+    
+        self.progress_ring.visible = False
+        self.page.update()
+
+    async def _initialize_and_load_first_post_page(self):
+        self.current_post_page = 1
+        async with tb.Client() as tieba_client:
+            thread_obj, posts_obj, all_comments = await core.fetch_full_thread_data(
+                tieba_client, self.selected_thread.tid, self.log_message, page_num=self.current_post_page
+            )
+    
+        self.preview_display.controls.clear()
+    
+        if not thread_obj or not posts_obj:
+            await self.log_message(f"错误：无法加载TID {self.selected_thread.tid} 的基础信息。")
+            self.preview_display.controls.append(ft.Text("加载帖子信息失败。"))
+            return
+
+        self.total_post_pages = posts_obj.page.total_page
+    
+        if not isinstance(self.selected_thread, tb_typing.Thread) or not self.selected_thread.contents:
+            self.selected_thread = thread_obj
+
+        posts_list = posts_obj.objs
+        self._build_rich_preview(self.selected_thread, posts_list, all_comments)
+
+        main_post_text = f"[帖子标题]: {self.selected_thread.title}\n[主楼内容]\n{core.format_contents(self.selected_thread.contents)}"
+        discussion_part_text = core.format_discussion_text(None, posts_list, all_comments)
+        self.discussion_text = f"{main_post_text}\n{discussion_part_text}"
+    
+        self.post_page_display.value = f"第 {self.current_post_page} / {self.total_post_pages} 页"
+        self.prev_post_page_button.disabled = self.current_post_page <= 1
+        self.next_post_page_button.disabled = self.current_post_page >= self.total_post_pages
+    
+        if self.preview_display.uid in (self.page.scroll or {}):
+            self.page.scroll[self.preview_display.uid].scroll_to(offset=0, duration=100)
 
     async def _load_and_display_post_page(self):
-        self.prev_post_page_button.disabled = True; self.next_post_page_button.disabled = True
-        self.preview_display.controls.clear(); self.preview_display.controls.append(ft.Row([ft.ProgressRing(), ft.Text(f"加载第 {self.current_post_page} 页...")]))
-        self.page.update()
-        async with tb.Client() as tieba_client:
-            thread_obj, posts, all_comments = await core.fetch_full_thread_data(tieba_client, self.selected_thread.tid, self.log_message, page_num=self.current_post_page)
+        self.prev_post_page_button.disabled = True
+        self.next_post_page_button.disabled = True
         self.preview_display.controls.clear()
-        if not thread_obj:
-            await self.log_message(f"错误：无法加载TID {self.selected_thread.tid} 的基础信息。"); self.preview_display.controls.append(ft.Text("加载帖子信息失败。")); return
-        if self.total_post_pages == 1: self.total_post_pages = (thread_obj.reply_num // core.POSTS_PER_PAGE) + 1
-        if not isinstance(self.selected_thread, tb_typing.Thread) or not self.selected_thread.contents: self.selected_thread = thread_obj
-        self._build_rich_preview(self.selected_thread, posts, all_comments)
-        self.discussion_text = core.format_discussion_text(self.selected_thread, posts, all_comments)
-        self.post_page_display.value = f"第 {self.current_post_page} / {self.total_post_pages} 页"
-        self.prev_post_page_button.disabled = self.current_post_page <= 1; self.next_post_page_button.disabled = self.current_post_page >= self.total_post_pages
+        self.preview_display.controls.append(ft.Row([ft.ProgressRing(), ft.Text(f"加载第 {self.current_post_page} 页...")]))
         self.page.update()
-        if self.preview_display.uid in (self.page.scroll or {}): self.page.scroll[self.preview_display.uid].scroll_to(offset=0, duration=100)
+
+        async with tb.Client() as tieba_client:
+            thread_obj, posts_obj, all_comments = await core.fetch_full_thread_data(
+                tieba_client, self.selected_thread.tid, self.log_message, page_num=self.current_post_page
+            )
+    
+        self.preview_display.controls.clear()
+    
+        if not thread_obj or not posts_obj:
+            await self.log_message(f"错误：无法加载TID {self.selected_thread.tid} 的第 {self.current_post_page} 页。")
+            self.preview_display.controls.append(ft.Text(f"加载第 {self.current_post_page} 页失败。"))
+            return
+        
+        posts_list = posts_obj.objs
+        self._build_rich_preview(self.selected_thread, posts_list, all_comments)
+        main_post_text = f"[帖子标题]: {self.selected_thread.title}\n[主楼内容]\n{core.format_contents(self.selected_thread.contents)}"
+        discussion_part_text = core.format_discussion_text(None, posts_list, all_comments)
+        self.discussion_text = f"{main_post_text}\n{discussion_part_text}"
+    
+        self.post_page_display.value = f"第 {self.current_post_page} / {self.total_post_pages} 页"
+        self.prev_post_page_button.disabled = self.current_post_page <= 1
+        self.next_post_page_button.disabled = self.current_post_page >= self.total_post_pages
+    
+        self.page.update()
+        if self.preview_display.uid in (self.page.scroll or {}):
+            self.page.scroll[self.preview_display.uid].scroll_to(offset=0, duration=100)
 
     async def load_prev_post_page(self, e):
         if self.current_post_page > 1: self.current_post_page -= 1; await self._load_and_display_post_page()
