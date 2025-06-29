@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.2.0" # Version updated
+VERSION = "1.3.0"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -65,6 +65,28 @@ def restore_default_prompts():
         return load_prompts()
     except (FileNotFoundError, Exception) as e:
         return False, f"恢复默认 Prompts 时发生错误: {e}"
+def merge_default_prompts():
+    try:
+        with open(DEFAULT_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            default_prompts = json.load(f)
+        with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            current_prompts = json.load(f)
+    except FileNotFoundError as e:
+        return False, f"错误: 无法找到Prompt配置文件: {e}"
+    except json.JSONDecodeError as e:
+        return False, f"加载 Prompts 时发生错误: {e}"
+
+    def deep_merge(target, source):
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                deep_merge(target[key], value)
+            else:
+                target[key] = value
+
+    deep_merge(current_prompts, default_prompts)
+    save_prompts(current_prompts)
+    return load_prompts()
+
 def build_stance_analyzer_prompt(discussion_text: str) -> str:
     prompt_config = PROMPTS['stance_analyzer']
     tasks_text = "\n".join([f"- {task}" for task in prompt_config['tasks']])
@@ -122,6 +144,45 @@ def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mo
 ---
 {rules_text}
 """.strip()
+
+def build_mode_generator_prompt(mode_name: str, mode_description: str) -> str:
+    return PROMPTS['mode_generator']['system_prompt'].format(mode_name=mode_name, mode_description=mode_description)
+
+async def generate_mode_prompts(
+    client: genai.Client, model_name: str, mode_name: str, mode_description: str, log_callback: typing.Callable
+) -> typing.Tuple[bool, typing.Union[dict, str]]:
+    """Calls Gemini to generate role and task for a new reply mode."""
+    await log_callback(f"正在请求AI为模式“{mode_name}”生成Role和Task...")
+    if not mode_name or not mode_description:
+        return False, "模式名称和描述不能为空。"
+
+    prompt = build_mode_generator_prompt(mode_name, mode_description)
+    generation_config = {"response_mime_type": "application/json"}
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+    
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content, model=model_name, contents=contents, config=generation_config
+        )
+        if response.text:
+            await log_callback("AI生成成功！")
+            result = json.loads(response.text)
+            if "role" in result and "task" in result:
+                return True, result
+            else:
+                return False, "AI返回的JSON格式不正确，缺少'role'或'task'字段。"
+        else:
+            feedback_info = "未知原因"
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                feedback_info = str(response.prompt_feedback)
+            await log_callback(f"AI未返回有效文本。反馈: {feedback_info}")
+            return False, f"AI未能生成内容。可能原因：内容安全策略触发。反馈: {feedback_info}"
+    except json.JSONDecodeError:
+        await log_callback("AI返回的内容不是有效的JSON格式。")
+        return False, "AI返回的内容不是有效的JSON格式。"
+    except Exception as e:
+        await log_callback(f"调用Gemini生成模式时出错: {e}")
+        return False, f"调用API时出错: {e}"
 
 async def fetch_gemini_models(api_key: str) -> typing.Tuple[bool, typing.Union[list[str], str]]:
     if not api_key: return False, "API Key 不能为空。"

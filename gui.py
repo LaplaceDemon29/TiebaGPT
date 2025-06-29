@@ -128,7 +128,6 @@ class TiebaGPTApp:
         mode_editor_content = ft.Column([
             ft.Text("回复模式编辑器", style=ft.TextThemeStyle.TITLE_MEDIUM),
             ft.Text("在这里添加、删除或修改AI的回复模式。"),
-            # [FIXED] Pass the async method directly to on_click
             ft.ElevatedButton("添加新模式", icon=ft.Icons.ADD, on_click=self.open_mode_dialog),
             ft.Divider(height=10),
             self.reply_modes_list,
@@ -167,6 +166,11 @@ class TiebaGPTApp:
             if 'common_rules' in gen_prompts:
                 controls_list.append(create_editor(('reply_generator', 'common_rules', 'title'), gen_prompts['common_rules'].get('title', '')))
                 controls_list.append(create_editor(('reply_generator', 'common_rules', 'rules'), gen_prompts['common_rules'].get('rules', '')))
+        if 'mode_generator' in prompts:
+            controls_list.append(ft.Divider(height=10))
+            controls_list.append(ft.Text("回复模式生成器通用规则", style=ft.TextThemeStyle.TITLE_MEDIUM))
+            controls_list.append(ft.Text("警告：修改此处将改变‘AI生成Role和Task’按钮的行为。", color=ft.Colors.ORANGE_700, size=11))
+            controls_list.append(create_editor(('mode_generator', 'system_prompt'), prompts['mode_generator'].get('system_prompt', '')))
 
         return ft.Column(controls_list, spacing=15)
     
@@ -267,14 +271,67 @@ class TiebaGPTApp:
         await self.log_message("Prompts 已更新并保存。"); self.page.update()
 
     async def restore_prompts_click(self, e):
-        self.progress_ring.visible = True; self.page.update()
-        success, msg = core.restore_default_prompts()
-        await self.log_message(msg)
-        if success: 
-            self.view_container.controls = [self.build_settings_view()]
-            self.page.open(ft.SnackBar(ft.Text("已恢复默认 Prompts！"), bgcolor=ft.Colors.BLUE))
-        else: self.page.open(ft.SnackBar(ft.Text(f"恢复失败: {msg}"), bgcolor=ft.Colors.RED))
-        self.progress_ring.visible = False; self.save_prompts_button.disabled = True; self.page.update()
+        restore_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("恢复默认 Prompts"),
+            content=ft.Text("请选择恢复方式："),
+            actions_alignment=ft.MainAxisAlignment.END,
+            actions_padding=ft.padding.all(20)
+        )
+
+        async def handle_full_restore(ev):
+            self.progress_ring.visible = True
+            self.page.close(restore_dialog)
+            self.page.update()
+
+            success, msg = core.restore_default_prompts()
+            await self.log_message(msg)
+            
+            self.progress_ring.visible = False
+            if success:
+                self.view_container.controls = [self.build_settings_view()]
+                self.page.open(ft.SnackBar(ft.Text("已彻底恢复默认 Prompts！"), bgcolor=ft.Colors.BLUE))
+            else:
+                self.page.open(ft.SnackBar(ft.Text(f"恢复失败: {msg}"), bgcolor=ft.Colors.RED))
+            
+            self.page.update()
+
+        async def handle_incremental_restore(ev):
+            self.progress_ring.visible = True
+            self.page.close(restore_dialog)
+            self.page.update()
+            success, msg = core.merge_default_prompts()
+            await self.log_message(msg)
+
+            self.progress_ring.visible = False
+            if success:
+                self.view_container.controls = [self.build_settings_view()]
+                self.page.open(ft.SnackBar(ft.Text("增量恢复成功！自定义模式已保留。"), bgcolor=ft.Colors.GREEN))
+            else:
+                self.page.open(ft.SnackBar(ft.Text(f"增量恢复失败: {msg}"), bgcolor=ft.Colors.RED))
+
+            self.page.update()
+
+        restore_dialog.actions = [
+            ft.TextButton("取消", on_click=lambda _: self.page.close(restore_dialog)),
+            ft.ElevatedButton(
+                "增量恢复",
+                tooltip="保留您新增的自定义回复模式，仅恢复其他默认设置",
+                on_click=handle_incremental_restore,
+                icon=ft.Icons.ADD_TASK,
+                bgcolor=ft.Colors.LIGHT_GREEN_100,
+            ),
+            ft.FilledButton(
+                "彻底恢复",
+                tooltip="警告：此操作将删除您所有自定义的回复模式，恢复到初始状态",
+                on_click=handle_full_restore,
+                icon=ft.Icons.WARNING_AMBER_ROUNDED,
+                bgcolor=ft.Colors.RED_200,
+            ),
+        ]
+
+        self.page.open(restore_dialog)
+        self.page.update()
 
     async def fetch_models_click(self, e):
         api_key = self.api_key_input.value.strip()
@@ -583,7 +640,15 @@ class TiebaGPTApp:
         dialog_is_custom_switch = ft.Switch(label="需要自定义观点输入 (is_custom)", value=False)
         dialog_role_input = ft.TextField(label="角色 (Role)", multiline=True, min_lines=3, max_lines=5)
         dialog_task_input = ft.TextField(label="任务 (Task)", multiline=True, min_lines=5, max_lines=10, hint_text="对于需要自定义观点的模式，请使用 {user_viewpoint} 作为占位符。")
+        dialog_ai_progress = ft.ProgressRing(visible=False, width=16, height=16)
         
+        ai_generate_button = ft.ElevatedButton(
+            "AI生成Role和Task",
+            icon=ft.Icons.AUTO_AWESOME,
+            tooltip="根据模式名称和描述，让AI自动填写下方内容",
+            on_click=None # Will be assigned later
+        )
+
         if not is_new_mode:
             modes = core.PROMPTS['reply_generator']['modes']
             config = modes.get(mode_name_to_edit, {})
@@ -592,6 +657,38 @@ class TiebaGPTApp:
             dialog_is_custom_switch.value = config.get("is_custom", False)
             dialog_role_input.value = config.get("role", "")
             dialog_task_input.value = config.get("task", "")
+
+        async def ai_generate_prompts(ev):
+            mode_name = dialog_mode_name_input.value.strip()
+            mode_desc = dialog_mode_desc_input.value.strip()
+            if not mode_name or not mode_desc:
+                self.page.open(ft.SnackBar(ft.Text("请先填写模式名称和描述！"), bgcolor=ft.Colors.ORANGE))
+                return
+
+            ai_generate_button.disabled = True
+            dialog_ai_progress.visible = True
+            mode_editor_dialog.update()
+
+            success, result = await core.generate_mode_prompts(
+                self.gemini_client,
+                self.settings["generator_model"],
+                mode_name,
+                mode_desc,
+                self.log_message
+            )
+            
+            if success:
+                dialog_role_input.value = result.get("role", "")
+                dialog_task_input.value = result.get("task", "")
+                self.page.open(ft.SnackBar(ft.Text("AI生成成功！"), bgcolor=ft.Colors.GREEN))
+            else:
+                self.page.open(ft.SnackBar(ft.Text(f"AI生成失败: {result}"), bgcolor=ft.Colors.RED))
+
+            ai_generate_button.disabled = False
+            dialog_ai_progress.visible = False
+            mode_editor_dialog.update()
+
+        ai_generate_button.on_click = ai_generate_prompts
 
         async def save_mode(ev):
             mode_name = dialog_mode_name_input.value.strip()
@@ -612,14 +709,14 @@ class TiebaGPTApp:
             
             core.PROMPTS['reply_generator']['modes'][mode_name] = new_config
             
-            self.save_prompts_button.disabled = False
-            await self.log_message(f"回复模式 '{mode_name}' 已更新。请记得点击“保存 Prompts”按钮。")
+            core.save_prompts(core.PROMPTS)
+            self.save_prompts_button.disabled = True
+            await self.log_message(f"回复模式 '{mode_name}' 已更新并保存到文件。")
+            self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name}' 已保存!"), bgcolor=ft.Colors.GREEN))
             
-            # Close the dialog after saving
             self.page.close(mode_editor_dialog)
             self._build_reply_modes_editor_list()
             self.page.update()
-
 
         mode_editor_dialog = ft.AlertDialog(
             modal=True,
@@ -628,6 +725,8 @@ class TiebaGPTApp:
                 controls=[
                     dialog_mode_name_input,
                     dialog_mode_desc_input,
+                    ft.Row([ai_generate_button, dialog_ai_progress], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Divider(),
                     dialog_is_custom_switch,
                     dialog_role_input,
                     dialog_task_input,
@@ -653,11 +752,13 @@ class TiebaGPTApp:
             content=ft.Text(f"您确定要永久删除回复模式 “{mode_name}” 吗？此操作不可撤销。"),
             actions_alignment=ft.MainAxisAlignment.END
         )
-        def confirm_delete(ev):
+        async def confirm_delete(ev):
             if mode_name in core.PROMPTS['reply_generator']['modes']:
                 del core.PROMPTS['reply_generator']['modes'][mode_name]
-                self.save_prompts_button.disabled = False
-                asyncio.create_task(self.log_message(f"回复模式 '{mode_name}' 已删除。请记得点击“保存 Prompts”按钮。"))
+                core.save_prompts(core.PROMPTS)
+                self.save_prompts_button.disabled = True
+                await self.log_message(f"回复模式 '{mode_name}' 已删除并从文件更新。")
+                self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name}' 已删除!"), bgcolor=ft.Colors.GREEN))
             
             self.page.close(confirm_dialog)
             self._build_reply_modes_editor_list()
