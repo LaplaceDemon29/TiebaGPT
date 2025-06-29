@@ -388,9 +388,13 @@ class TiebaGPTApp:
         if self.selected_thread.tid in self.analysis_cache:
             await self.log_message(f"从缓存加载TID {self.selected_thread.tid}的完整分析结果。")
             cached_result = self.analysis_cache[self.selected_thread.tid]
-            analysis_str = f"## 讨论状况分析结果 (缓存)\n```json\n{json.dumps(cached_result, ensure_ascii=False, indent=2)}\n```"
-            self.analysis_display.value = analysis_str
-            self.current_analysis_tid = self.selected_thread.tid
+            if "summary" in cached_result:
+                summary_text = cached_result["summary"]
+                self.analysis_display.value = f"## 讨论状况摘要 (缓存)\n\n{summary_text}"
+                self.current_analysis_tid = self.selected_thread.tid
+            else:
+                self.analysis_display.value = "缓存数据格式有误，请重新分析。"
+                await self.log_message(f"警告: 缓存的TID {self.selected_thread.tid} 数据缺少 'summary' 键。")
         else:
             self.analysis_display.value = "点击“分析整个帖子”按钮以开始"
         
