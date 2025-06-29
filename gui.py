@@ -128,7 +128,12 @@ class TiebaGPTApp:
         mode_editor_content = ft.Column([
             ft.Text("回复模式编辑器", style=ft.TextThemeStyle.TITLE_MEDIUM),
             ft.Text("在这里添加、删除或修改AI的回复模式。"),
-            ft.ElevatedButton("添加新模式", icon=ft.Icons.ADD, on_click=self.open_mode_dialog),
+            ft.Row(
+                controls=[
+                    ft.ElevatedButton("添加新模式", icon=ft.Icons.ADD, on_click=self.open_mode_dialog),
+                    ft.ElevatedButton("导入新模式", icon=ft.Icons.CONTENT_PASTE_GO, on_click=self.open_import_dialog)
+                ], spacing=10
+            ),
             ft.Divider(height=10),
             self.reply_modes_list,
         ])
@@ -195,6 +200,7 @@ class TiebaGPTApp:
                                     spacing=2,
                                 ),
                                 ft.Row([
+                                    ft.IconButton(ft.Icons.SHARE, tooltip="分享此模式", on_click=self.share_mode_click, data=mode_name, icon_color=ft.Colors.BLUE_400),
                                     ft.IconButton(ft.Icons.EDIT, tooltip="编辑此模式", on_click=self.open_mode_dialog, data=mode_name),
                                     ft.IconButton(ft.Icons.DELETE_FOREVER, tooltip="删除此模式", on_click=self.delete_mode_click, data=mode_name, icon_color=ft.Colors.RED_400),
                                 ])
@@ -220,6 +226,11 @@ class TiebaGPTApp:
         success, msg = core.load_prompts()
         await self.log_message(msg)
         if not success: self.search_button.disabled = True
+        status, user_v, default_v = core.check_prompts_version()
+        if status == "NEEDS_UPDATE":
+            await self.log_message(f"配置需要更新 (用户版本: {user_v}, 最新版本: {default_v})。正在提示用户...")
+            await self._show_prompt_update_dialog(user_v, default_v)
+            await self.log_message("配置更新流程结束。")
         if self.settings.get("api_key"):
             try:
                 self.gemini_client = genai.Client(api_key=self.settings["api_key"])
@@ -399,7 +410,7 @@ class TiebaGPTApp:
             self.analysis_display.value = "点击“分析整个帖子”按钮以开始"
         
         can_generate = self.current_analysis_tid == self.selected_thread.tid
-        self.mode_selector.disabled = not can_generate
+        self.mode_selector.disabled = False
         self.generate_button.disabled = not can_generate
         self.analyze_button.disabled = False
         await self._initialize_and_load_first_post_page()
@@ -508,7 +519,7 @@ class TiebaGPTApp:
 
     async def analyze_thread_click(self, e):
         current_tid = self.selected_thread.tid
-        self.analyze_button.disabled = True; self.mode_selector.disabled = True; self.generate_button.disabled = True
+        self.analyze_button.disabled = True; self.generate_button.disabled = True
         self.analysis_display.value = "⏳ 开始分批次分析，请稍候..."; self.analysis_progress_bar.visible = True; self.analysis_progress_bar.value = 0
         self.page.update()
         async with tb.Client() as tieba_client:
@@ -517,7 +528,7 @@ class TiebaGPTApp:
         if "summary" in self.analysis_result:
             self.analysis_cache[current_tid] = self.analysis_result; self.current_analysis_tid = current_tid
             summary_text = self.analysis_result["summary"]; self.analysis_display.value = f"## 讨论状况摘要\n\n{summary_text}"
-            self.mode_selector.disabled = False; self.generate_button.disabled = False
+            self.generate_button.disabled = False
         else:
             error_msg = self.analysis_result.get("error", "未知错误"); self.analysis_display.value = f"❌ 分析失败:\n\n{error_msg}"
         
@@ -634,6 +645,146 @@ class TiebaGPTApp:
         self.view_container.controls = [self.build_thread_list_view()]; self.page.update(); await asyncio.sleep(0.1)
         if self.page.scroll and self.thread_list_view.uid in self.page.scroll: self.page.scroll[self.thread_list_view.uid].scroll_to(offset=self.thread_list_scroll_offset, duration=100)
         self.page.update()
+
+    async def _save_mode_and_refresh_ui(self, mode_name: str, config: dict, success_message: str):
+        if 'reply_generator' not in core.PROMPTS:
+            core.PROMPTS['reply_generator'] = {}
+        if 'modes' not in core.PROMPTS['reply_generator']:
+            core.PROMPTS['reply_generator']['modes'] = {}
+            
+        core.PROMPTS['reply_generator']['modes'][mode_name] = config
+        
+        core.save_prompts(core.PROMPTS)
+
+        if hasattr(self, 'save_prompts_button'):
+            self.save_prompts_button.disabled = True
+        
+        await self.log_message(f"回复模式 '{mode_name}' 已更新并保存到文件。")
+        self.page.open(ft.SnackBar(ft.Text(success_message), bgcolor=ft.Colors.GREEN))
+        
+        self._build_reply_modes_editor_list()
+        self.page.update()
+
+    async def share_mode_click(self, e):
+        mode_name_to_share = e.control.data
+        modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
+        
+        if mode_name_to_share not in modes:
+            self.page.open(ft.SnackBar(ft.Text(f"错误：找不到模式 '{mode_name_to_share}'"), bgcolor=ft.Colors.RED))
+            return
+
+        mode_config = modes[mode_name_to_share]
+        
+        share_data = {
+            "tieba_gpt_mode_version": "1.3",
+            "name": mode_name_to_share,
+            "description": mode_config.get("description", ""),
+            "is_custom": mode_config.get("is_custom", False),
+            "role": mode_config.get("role", ""),
+            "task": mode_config.get("task", "")
+        }
+        
+        try:
+            json_string = json.dumps(share_data, indent=2, ensure_ascii=False)
+            self.page.set_clipboard(json_string)
+            self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name_to_share}' 已复制到剪贴板！"), bgcolor=ft.Colors.GREEN))
+        except Exception as ex:
+            await self.log_message(f"序列化模式 '{mode_name_to_share}' 失败: {ex}")
+            self.page.open(ft.SnackBar(ft.Text("复制失败，请检查日志。"), bgcolor=ft.Colors.RED))
+            
+        self.page.update()
+
+    async def show_overwrite_confirmation(self, mode_name, new_config):
+        async def handle_overwrite(ev):
+            self.page.close(confirm_dialog)
+            await self._save_mode_and_refresh_ui(
+                mode_name, 
+                new_config, 
+                success_message=f"模式 '{mode_name}' 已成功覆盖!"
+            )
+        
+        confirm_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("模式已存在"),
+            content=ft.Text(f"名为“{mode_name}”的模式已存在。您要覆盖它吗？"),
+            actions=[
+                ft.TextButton("取消", on_click=lambda _: self.page.close(confirm_dialog)),
+                ft.FilledButton("覆盖", on_click=handle_overwrite),
+            ]
+        )
+        self.page.open(confirm_dialog)
+
+
+    async def open_import_dialog(self, e):
+        dialog_textfield = ft.TextField(
+            label="模式分享码",
+            hint_text="请在此处粘贴分享的模式JSON代码...",
+            multiline=True,
+            min_lines=10,
+            max_lines=15,
+            text_size=12
+        )
+
+        async def do_import(ev):
+            try:
+                json_text = dialog_textfield.value
+                if not json_text:
+                    dialog_textfield.error_text = "输入框不能为空！"
+                    import_dialog.update()
+                    return
+
+                data = json.loads(json_text)
+
+                if not isinstance(data, dict) or "tieba_gpt_mode_version" not in data:
+                    raise ValueError("这不是一个有效的TiebaGPT模式分享码。")
+                
+                mode_name = data.get("name")
+                if not mode_name:
+                    raise ValueError("导入的模式缺少'name'字段。")
+                
+                new_config = {
+                    "description": data.get("description", ""),
+                    "is_custom": data.get("is_custom", False),
+                    "role": data.get("role", ""),
+                    "task": data.get("task", ""),
+                }
+
+                self.page.close(import_dialog)
+
+                modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
+                if mode_name in modes:
+                    await self.show_overwrite_confirmation(mode_name, new_config)
+                else:
+                    await self._save_mode_and_refresh_ui(mode_name,new_config,success_message=f"模式 '{mode_name}' 已成功导入!")
+
+            except json.JSONDecodeError:
+                dialog_textfield.error_text = "无效的JSON格式，请检查代码是否完整。"
+                import_dialog.update()
+            except ValueError as ve:
+                dialog_textfield.error_text = str(ve)
+                import_dialog.update()
+            except Exception as ex:
+                await self.log_message(f"导入模式时发生未知错误: {ex}")
+                self.page.close(import_dialog)
+                self.page.open(ft.SnackBar(ft.Text("发生未知错误，请检查日志。"), bgcolor=ft.Colors.RED))
+
+        import_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("导入回复模式"),
+            content=ft.Container(
+                content=dialog_textfield,
+                width=500,
+            ),
+            actions=[
+                ft.TextButton("取消", on_click=lambda _: self.page.close(import_dialog)),
+                ft.FilledButton("导入", on_click=do_import),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+        self.page.open(import_dialog)
+        self.page.update()
+
         
     async def open_mode_dialog(self, e):
         mode_name_to_edit = e.control.data if hasattr(e.control, 'data') else None
@@ -707,20 +858,8 @@ class TiebaGPTApp:
                 "role": dialog_role_input.value.strip(),
                 "task": dialog_task_input.value.strip(),
             }
-            
-            if 'reply_generator' not in core.PROMPTS: core.PROMPTS['reply_generator'] = {}
-            if 'modes' not in core.PROMPTS['reply_generator']: core.PROMPTS['reply_generator']['modes'] = {}
-            
-            core.PROMPTS['reply_generator']['modes'][mode_name] = new_config
-            
-            core.save_prompts(core.PROMPTS)
-            self.save_prompts_button.disabled = True
-            await self.log_message(f"回复模式 '{mode_name}' 已更新并保存到文件。")
-            self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name}' 已保存!"), bgcolor=ft.Colors.GREEN))
-            
             self.page.close(mode_editor_dialog)
-            self._build_reply_modes_editor_list()
-            self.page.update()
+            await self._save_mode_and_refresh_ui(mode_name, new_config, success_message=f"模式 '{mode_name}' 已保存!")
 
         mode_editor_dialog = ft.AlertDialog(
             modal=True,
@@ -774,6 +913,59 @@ class TiebaGPTApp:
         
         self.page.open(confirm_dialog)
         self.page.update()
+
+    async def _show_prompt_update_dialog(self, user_v, default_v):
+        
+        async def handle_incremental_merge(e, prefer_user : bool = False):
+            self.page.close(update_dialog)
+            self.progress_ring.visible = True
+            self.page.update()
+            
+            success, msg = core.merge_default_prompts(prefer_user)
+            await self.log_message(msg)
+            
+            self.progress_ring.visible = False
+            if success:
+                self.page.open(ft.SnackBar(ft.Text(msg), bgcolor=ft.Colors.GREEN))
+                if self.previous_view_name == "settings":
+                     self.view_container.controls = [self.build_settings_view()]
+            else:
+                self.page.open(ft.SnackBar(ft.Text(f"更新失败: {msg}"), bgcolor=ft.Colors.RED))
+            self.page.update()
+
+        async def handle_incremental_update(e):
+            await handle_incremental_merge(e, prefer_user=True)
+
+        async def handle_full_restore(e):
+            self.page.close(update_dialog)
+            self.progress_ring.visible = True
+            self.page.update()
+            success, msg = core.restore_default_prompts()
+            await self.log_message(msg)
+            
+            self.progress_ring.visible = False
+            if success:
+                 self.page.open(ft.SnackBar(ft.Text("已彻底恢复为默认配置！"), bgcolor=ft.Colors.BLUE))
+                 if self.previous_view_name == "settings":
+                     self.view_container.controls = [self.build_settings_view()]
+            else:
+                self.page.open(ft.SnackBar(ft.Text(f"恢复失败: {msg}"), bgcolor=ft.Colors.RED))
+            self.page.update()
+
+        update_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("💡 配置更新提示"),
+            content=ft.Text(f"检测到新的配置可用！\n\n您的配置版本: {user_v}\n最新配置版本: {default_v}\n\n建议进行“增量更新”以获取新功能，同时保留您的自定义模式。"),
+            actions=[
+                ft.TextButton("稍后提示", on_click=lambda _: self.page.close(update_dialog)),
+                ft.ElevatedButton("增量更新", on_click=handle_incremental_update, icon=ft.Icons.UPGRADE, tooltip="添加新功能，保留您已修改的 Prompts。"),
+                ft.ElevatedButton("增量覆盖", on_click=handle_incremental_merge, icon=ft.Icons.MERGE_TYPE, tooltip="用最新的默认值覆盖您的 Prompts，但保留您新增的。"),
+                ft.FilledButton("彻底覆盖", on_click=handle_full_restore, icon=ft.Icons.SETTINGS_BACKUP_RESTORE, tooltip="警告：此操作将删除您所有自定义的回复模式！"),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+        self.page.open(update_dialog)
 
 async def main(page: ft.Page):
     app = TiebaGPTApp(page)

@@ -1,4 +1,5 @@
 {
+  "prompts_version": 2,
   "stance_analyzer": {
     "system_prompt": "你是一个专业的网络舆情分析师，擅长快速阅读并总结网络讨论。请仔细阅读以下百度贴吧的帖子和回复内容，然后用简洁的语言，以要点形式（使用Markdown的-或*）总结出当前讨论的核心内容。",
     "tasks": [

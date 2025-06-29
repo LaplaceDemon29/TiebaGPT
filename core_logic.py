@@ -56,6 +56,22 @@ def load_prompts():
     except (json.JSONDecodeError, Exception) as e:
         return False, f"加载 Prompts 时发生错误: {e}"
 
+def check_prompts_version() -> tuple[str, int, int]:
+    try:
+        with open(DEFAULT_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            default_prompts = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"严重错误: 无法加载默认配置文件 {DEFAULT_PROMPTS_FILE}. {e}")
+        return "ERROR", 0, 0
+
+    default_version = default_prompts.get("prompts_version", 1)
+    user_version = PROMPTS.get("prompts_version", 0)
+
+    if user_version < default_version:
+        return "NEEDS_UPDATE", user_version, default_version
+    else:
+        return "UP_TO_DATE", user_version, default_version
+
 def save_prompts(prompts_data: dict):
     with open(PROMPTS_FILE, 'w', encoding='utf-8') as f:
         json.dump(prompts_data, f, indent=4, ensure_ascii=False)
@@ -65,27 +81,37 @@ def restore_default_prompts():
         return load_prompts()
     except (FileNotFoundError, Exception) as e:
         return False, f"恢复默认 Prompts 时发生错误: {e}"
-def merge_default_prompts():
+def merge_default_prompts(prefer_user: bool = False) -> tuple[bool, str]:
     try:
         with open(DEFAULT_PROMPTS_FILE, 'r', encoding='utf-8') as f:
             default_prompts = json.load(f)
-        with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
-            current_prompts = json.load(f)
-    except FileNotFoundError as e:
-        return False, f"错误: 无法找到Prompt配置文件: {e}"
+    except FileNotFoundError:
+        return False, f"错误: 无法找到默认Prompt配置文件: '{DEFAULT_PROMPTS_FILE}'"
     except json.JSONDecodeError as e:
-        return False, f"加载 Prompts 时发生错误: {e}"
+        return False, f"错误: 加载默认Prompts时发生JSON解析错误: {e}"
 
-    def deep_merge(target, source):
+    def deep_merge(target: dict, source: dict, preserve_target_values: bool):
         for key, value in source.items():
-            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                deep_merge(target[key], value)
-            else:
+            if key not in target:
+                target[key] = value
+            elif isinstance(target.get(key), dict) and isinstance(value, dict):
+                deep_merge(target[key], value, preserve_target_values)
+            elif not preserve_target_values:
                 target[key] = value
 
-    deep_merge(current_prompts, default_prompts)
-    save_prompts(current_prompts)
-    return load_prompts()
+    deep_merge(PROMPTS, default_prompts, preserve_target_values=prefer_user)
+
+    if "prompts_version" in default_prompts:
+        PROMPTS["prompts_version"] = default_prompts["prompts_version"]
+
+    save_prompts(PROMPTS)
+
+    if prefer_user:
+        message = "Prompts更新成功！您的自定义设置已保留。"
+    else:
+        message = "Prompts更新成功！与默认设置冲突的条目已被覆盖。"
+
+    return True, message
 
 def build_stance_analyzer_prompt(discussion_text: str) -> str:
     prompt_config = PROMPTS['stance_analyzer']
