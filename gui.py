@@ -406,26 +406,50 @@ class TiebaGPTApp:
         async with tb.Client() as tieba_client:
             self.analysis_result = await core.analyze_stance_by_page(tieba_client, self.gemini_client, current_tid, self.total_post_pages, self.settings["analyzer_model"], self.log_message, self._update_analysis_progress)
         self.analysis_progress_bar.visible = False; self.analyze_button.disabled = False
-        if self.analysis_result and "error" not in self.analysis_result:
+        if "summary" in self.analysis_result:
             self.analysis_cache[current_tid] = self.analysis_result; self.current_analysis_tid = current_tid
-            analysis_str = f"## 讨论状况分析结果\n```json\n{json.dumps(self.analysis_result, ensure_ascii=False, indent=2)}\n```"
-            self.analysis_display.value = analysis_str; self.mode_selector.disabled = False; self.generate_button.disabled = False
-        else: self.analysis_display.value = f"❌ 分析失败:\n\n{self.analysis_result.get('error', '未知错误')}"
+            summary_text = self.analysis_result["summary"]; self.analysis_display.value = f"## 讨论状况摘要\n\n{summary_text}"
+            self.mode_selector.disabled = False; self.generate_button.disabled = False
+        else:
+            error_msg = self.analysis_result.get("error", "未知错误"); self.analysis_display.value = f"❌ 分析失败:\n\n{error_msg}"
+        
         self.page.update()
+
 
     async def generate_reply_click(self, e):
         current_tid = self.selected_thread.tid
-        current_analysis = self.analysis_cache.get(current_tid)
-        if not current_analysis: await self.log_message("错误：未找到当前帖子的分析结果，无法生成回复。"); return
+        cached_analysis = self.analysis_cache.get(current_tid)
+        if not cached_analysis or "summary" not in cached_analysis:
+            await self.log_message("错误：未找到当前帖子的分析摘要，无法生成回复。")
+            return
+        
+        analysis_summary = cached_analysis["summary"]
         self.current_mode = self.mode_selector.value
-        if not self.current_mode: await self.log_message("请先选择一个回复模型！"); return
+        if not self.current_mode:
+            await self.log_message("请先选择一个回复模型！")
+            return
+        
         if self.current_mode == "自定义模型":
             self.custom_viewpoint = self.custom_view_input.value.strip()
-            if not self.custom_viewpoint: await self.log_message("使用自定义模型时，观点不能为空！"); return
-        else: self.custom_viewpoint = None
-        self.progress_ring.visible = True; self.generate_button.disabled = True; self.copy_button.disabled = True; self.reply_display.value = "⏳ 生成中，请稍候..."; self.page.update()
-        generated_reply = await core.generate_reply(self.gemini_client, self.discussion_text, current_analysis, self.current_mode, self.settings["generator_model"], self.log_message, custom_viewpoint=self.custom_viewpoint)
-        self.reply_display.value = generated_reply; self.progress_ring.visible = False; self.generate_button.disabled = False; self.copy_button.disabled = not bool(generated_reply); self.page.update()
+            if not self.custom_viewpoint:
+                await self.log_message("使用自定义模型时，观点不能为空！")
+                return
+        else:
+            self.custom_viewpoint = None
+
+        self.progress_ring.visible = True; self.generate_button.disabled = True; self.copy_button.disabled = True
+        self.reply_display.value = "⏳ 生成中，请稍候..."
+        self.page.update()
+    
+        generated_reply = await core.generate_reply(
+            self.gemini_client, self.discussion_text, analysis_summary, 
+            self.current_mode, self.settings["generator_model"], 
+            self.log_message, custom_viewpoint=self.custom_viewpoint
+        )
+    
+        self.reply_display.value = generated_reply
+        self.progress_ring.visible = False; self.generate_button.disabled = False; self.copy_button.disabled = not bool(generated_reply)
+        self.page.update()
 
     async def search_tieba(self, e):
         self.current_page_num = 1; query = self.search_query_input.value.strip(); self.current_search_query = query if query else None
