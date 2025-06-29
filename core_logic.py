@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.1.1"
+VERSION = "1.2.0" # Version updated
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -93,14 +93,16 @@ def build_analysis_summarizer_prompt(chunk_summaries: list[dict]) -> str:
 
 def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mode: str, custom_viewpoint: typing.Optional[str] = None) -> str:
     gen_config = PROMPTS['reply_generator']
-    mode_config = gen_config['modes'][mode]
+    mode_config = gen_config['modes'].get(mode)
+    if not mode_config:
+        raise ValueError(f"未找到名为 '{mode}' 的回复模式配置。")
+        
     role_prompt = mode_config['role']
+    task_description = mode_config['task']
     
-    # 简化后的任务描述
-    task_description = mode_config['scenarios']['main_task']
-    if mode == "自定义模型":
+    if mode_config.get('is_custom', False):
         if not custom_viewpoint:
-            raise ValueError("使用自定义模型时，必须提供 custom_viewpoint。")
+            raise ValueError(f"使用模式 '{mode}' 时，必须提供 custom_viewpoint。")
         task_description = task_description.format(user_viewpoint=custom_viewpoint)
 
     rules_config = gen_config['common_rules']
