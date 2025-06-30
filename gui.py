@@ -65,6 +65,7 @@ class TiebaGPTApp:
         self.mode_selector = ft.Dropdown(label="回复模式", on_change=self.on_mode_change, disabled=True, expand=True)
         self.custom_view_input = ft.TextField(label="请输入此模式所需的自定义内容", multiline=True, max_lines=3, visible=False)
         self.generate_button = ft.ElevatedButton("生成回复", on_click=self.generate_reply_click, icon=ft.Icons.AUTO_AWESOME, disabled=True)
+        self.generate_reply_ring = ft.ProgressRing(visible=False, width=16, height=16)
         self.copy_button = ft.IconButton(icon=ft.Icons.CONTENT_COPY_ROUNDED, tooltip="复制回复内容", on_click=self.copy_reply_click, disabled=True)
         self.prev_post_page_button = ft.IconButton(icon=ft.Icons.KEYBOARD_ARROW_LEFT, on_click=self.load_prev_post_page, tooltip="上一页", disabled=True)
         self.next_post_page_button = ft.IconButton(icon=ft.Icons.KEYBOARD_ARROW_RIGHT, on_click=self.load_next_post_page, tooltip="下一页", disabled=True)
@@ -75,7 +76,9 @@ class TiebaGPTApp:
         self.save_api_key_switch = ft.Switch(label="在配置文件中保存API Key (有安全风险)",value=False,on_change=self.validate_settings)
         self.analyzer_model_dd = ft.Dropdown(label="分析模型", hint_text="选择一个分析模型", on_change=self.validate_settings, expand=True)
         self.generator_model_dd = ft.Dropdown(label="生成模型", hint_text="选择一个生成模型", on_change=self.validate_settings, expand=True)
+        self.model_selection_row = ft.Row(controls=[self.analyzer_model_dd, self.generator_model_dd], spacing=20)
         self.fetch_models_button = ft.ElevatedButton("测试Key并获取模型", on_click=self.fetch_models_click, icon=ft.Icons.CLOUD_DOWNLOAD)
+        self.fetch_models_ring = ft.ProgressRing(visible=False, width=16, height=16)
         self.save_settings_button = ft.ElevatedButton("保存设置", on_click=self.save_settings_click, icon=ft.Icons.SAVE, disabled=True)
         self.prompt_text_fields = {}
         self.save_prompts_button = ft.ElevatedButton("保存 Prompts", on_click=self.save_prompts_click, icon=ft.Icons.SAVE_ALT, disabled=True)
@@ -136,12 +139,11 @@ class TiebaGPTApp:
                 )
             ], expand=True, spacing=10
         )
-        reply_card = ft.Column(controls=[ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),self.mode_selector,self.custom_view_input,ft.Row([self.generate_button, self.copy_button], alignment=ft.MainAxisAlignment.CENTER),ft.Divider(),ft.Container(content=ft.Column([self.reply_display], scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.LIGHT_BLUE_50)],expand=True, spacing=10)
-        return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button, self.progress_ring]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), height=100, border_radius=5, padding=10)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        reply_card = ft.Column(controls=[ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),self.mode_selector,self.custom_view_input,ft.Row([self.generate_button, self.copy_button, self.generate_reply_ring], alignment=ft.MainAxisAlignment.CENTER),ft.Divider(),ft.Container(content=ft.Column([self.reply_display], scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.LIGHT_BLUE_50)],expand=True, spacing=10)
+        return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), height=100, border_radius=5, padding=10)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     
     def build_settings_view(self):
-        api_settings_content = ft.Column([ft.Text("API 设置", style=ft.TextThemeStyle.TITLE_LARGE),ft.Text("请在这里配置您的Gemini API。"),self.api_key_input,ft.Row([self.save_api_key_switch,ft.IconButton(icon=ft.Icons.HELP_OUTLINE,icon_color=ft.Colors.GREY_500,tooltip="警告：开启此项会将您的API Key以明文形式保存在 settings.json 文件中，这可能导致密钥被恶意软件窃取或在分享文件时不慎泄露。建议仅在您完全了解风险的情况下使用。")],alignment=ft.MainAxisAlignment.START),self.fetch_models_button,self.progress_ring,ft.Divider(),ft.Row(controls=[self.analyzer_model_dd, self.generator_model_dd], spacing=20),ft.Divider(),self.save_settings_button], spacing=15)
-        
+        api_settings_content = ft.Column([ft.Text("API 设置", style=ft.TextThemeStyle.TITLE_LARGE),ft.Text("请在这里配置您的Gemini API。"),self.api_key_input,ft.Row([self.save_api_key_switch,ft.IconButton(icon=ft.Icons.HELP_OUTLINE,icon_color=ft.Colors.GREY_500,tooltip="警告：开启此项会将您的API Key以明文形式保存在 settings.json 文件中，这可能导致密钥被恶意软件窃取或在分享文件时不慎泄露。建议仅在您完全了解风险的情况下使用。")],alignment=ft.MainAxisAlignment.START),ft.Row([self.fetch_models_button,self.fetch_models_ring,],vertical_alignment=ft.CrossAxisAlignment.CENTER,spacing=10),ft.Divider(),self.model_selection_row,ft.Divider(),self.save_settings_button], spacing=15);
         self.prompt_text_fields.clear()
         
         prompt_panel_content = self._build_prompt_editors()
@@ -277,6 +279,46 @@ class TiebaGPTApp:
             return env_key
         return ""
 
+    def _rebuild_model_dropdowns(self, models_list: list, preferred_analyzer: str = None, preferred_generator: str = None):
+        new_analyzer_dd = ft.Dropdown(
+            label="分析模型",
+            hint_text="选择一个分析模型",
+            on_change=self.validate_settings,
+            expand=True,
+            options=[ft.dropdown.Option(model) for model in models_list]
+        )
+        new_generator_dd = ft.Dropdown(
+            label="生成模型",
+            hint_text="选择一个生成模型",
+            on_change=self.validate_settings,
+            expand=True,
+            options=[ft.dropdown.Option(model) for model in models_list]
+        )
+
+        if models_list:
+            analyzer_val = preferred_analyzer
+            generator_val = preferred_generator
+            if not analyzer_val:
+                analyzer_val = self.settings.get("analyzer_model")
+            if not generator_val:
+                generator_val = self.settings.get("generator_model")
+
+            if analyzer_val and analyzer_val in models_list:
+                new_analyzer_dd.value = analyzer_val
+            else:
+                new_analyzer_dd.value = next((m for m in models_list if "flash" in m), models_list[0])
+            
+            if generator_val and generator_val in models_list:
+                new_generator_dd.value = generator_val
+            else:
+                new_generator_dd.value = next((m for m in models_list if "flash" in m), models_list[0])
+
+        self.analyzer_model_dd = new_analyzer_dd
+        self.generator_model_dd = new_generator_dd
+        self.model_selection_row.controls.clear()
+        self.model_selection_row.controls.append(self.analyzer_model_dd)
+        self.model_selection_row.controls.append(self.generator_model_dd)
+
     async def initialize_app(self):
         self.settings = core.load_settings()
         await self.log_message("设置已加载。")
@@ -339,9 +381,7 @@ class TiebaGPTApp:
             self.save_api_key_switch.value = False
             await self.log_message("请在输入框中配置 API Key。")
 
-        self._populate_model_dropdowns(self.settings.get("available_models", []))
-        self.analyzer_model_dd.value = self.settings.get("analyzer_model")
-        self.generator_model_dd.value = self.settings.get("generator_model")
+        self._rebuild_model_dropdowns(self.settings.get("available_models"))
         self.save_prompts_button.disabled = True; await self.log_message("已打开设置页面。"); self.validate_settings(None); self.page.update()
 
     async def close_settings_view(self, e):
@@ -436,18 +476,19 @@ class TiebaGPTApp:
     async def fetch_models_click(self, e):
         api_key = self.api_key_input.value.strip()
         if not api_key: await self.log_message("请输入API Key后再获取模型。"); return
-        self.progress_ring.visible = True; self.fetch_models_button.disabled = True; self.page.update()
+        previous_analyzer = self.analyzer_model_dd.value
+        previous_generator = self.generator_model_dd.value
+        self.fetch_models_ring.visible = True; self.fetch_models_button.disabled = True; self.page.update()
         success, result = await core.fetch_gemini_models(api_key)
         if success:
             await self.log_message(f"成功获取 {len(result)} 个可用模型！正在刷新UI...")
             self.settings["available_models"] = result
-            self.view_container.controls = [self.build_settings_view()]
-            self.api_key_input.value = api_key
+            self._rebuild_model_dropdowns(result, preferred_analyzer=previous_analyzer, preferred_generator=previous_generator)
             self.page.open(ft.SnackBar(ft.Text("模型列表获取并刷新成功!"), bgcolor=ft.Colors.GREEN))
         else:
             await self.log_message(f"获取模型失败: {result}")
             self.page.open(ft.SnackBar(ft.Text(f"获取失败: {result}"), bgcolor=ft.Colors.RED))
-        self.progress_ring.visible = False; self.fetch_models_button.disabled = False
+        self.fetch_models_ring.visible = False; self.fetch_models_button.disabled = False
         self.validate_settings(None); self.page.update()
 
     async def save_settings_click(self, e):
@@ -661,7 +702,7 @@ class TiebaGPTApp:
         else:
             self.custom_input = None
 
-        self.progress_ring.visible = True; self.generate_button.disabled = True; self.copy_button.disabled = True
+        self.generate_reply_ring.visible = True; self.generate_button.disabled = True; self.copy_button.disabled = True
         self.reply_display.value = "⏳ 生成中，请稍候..."
         self.page.update()
     
@@ -672,7 +713,7 @@ class TiebaGPTApp:
         )
     
         self.reply_display.value = generated_reply
-        self.progress_ring.visible = False; self.generate_button.disabled = False; self.copy_button.disabled = not bool(generated_reply)
+        self.generate_reply_ring.visible = False; self.generate_button.disabled = False; self.copy_button.disabled = not bool(generated_reply)
         self.page.update()
 
     async def search_tieba(self, e):
