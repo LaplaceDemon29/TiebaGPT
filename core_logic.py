@@ -28,7 +28,7 @@ def get_app_version() -> str:
         return base_version
         
 def load_settings() -> dict:
-    default_settings = {"api_key": os.getenv("GEMINI_API_KEY", ""),"analyzer_model": "gemini-1.5-flash-latest","generator_model": "gemini-1.5-flash-latest","available_models": []}
+    default_settings = {"api_key": "","analyzer_model": "gemini-1.5-flash-latest","generator_model": "gemini-1.5-flash-latest","available_models": []}
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
             user_settings = json.load(f)

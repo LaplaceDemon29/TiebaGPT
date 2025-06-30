@@ -1,5 +1,6 @@
 import flet as ft
 import asyncio
+import os
 import json
 import uuid
 from google import genai
@@ -71,6 +72,7 @@ class TiebaGPTApp:
         
         # -- 设置页控件 ---
         self.api_key_input = ft.TextField(label="Gemini API Key", password=True, can_reveal_password=True, on_change=self.validate_settings)
+        self.save_api_key_switch = ft.Switch(label="在配置文件中保存API Key (有安全风险)",value=False,on_change=self.validate_settings)
         self.analyzer_model_dd = ft.Dropdown(label="分析模型", hint_text="选择一个分析模型", on_change=self.validate_settings, expand=True)
         self.generator_model_dd = ft.Dropdown(label="生成模型", hint_text="选择一个生成模型", on_change=self.validate_settings, expand=True)
         self.fetch_models_button = ft.ElevatedButton("测试Key并获取模型", on_click=self.fetch_models_click, icon=ft.Icons.CLOUD_DOWNLOAD)
@@ -138,7 +140,7 @@ class TiebaGPTApp:
         return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button, self.progress_ring]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), height=100, border_radius=5, padding=10)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     
     def build_settings_view(self):
-        api_settings_content = ft.Column([ft.Text("API 设置", style=ft.TextThemeStyle.TITLE_LARGE),ft.Text("请在这里配置您的Gemini API。"),self.api_key_input,self.fetch_models_button,self.progress_ring,ft.Divider(),ft.Row(controls=[self.analyzer_model_dd, self.generator_model_dd], spacing=20),ft.Divider(),self.save_settings_button], spacing=15)
+        api_settings_content = ft.Column([ft.Text("API 设置", style=ft.TextThemeStyle.TITLE_LARGE),ft.Text("请在这里配置您的Gemini API。"),self.api_key_input,ft.Row([self.save_api_key_switch,ft.IconButton(icon=ft.Icons.HELP_OUTLINE,icon_color=ft.Colors.GREY_500,tooltip="警告：开启此项会将您的API Key以明文形式保存在 settings.json 文件中，这可能导致密钥被恶意软件窃取或在分享文件时不慎泄露。建议仅在您完全了解风险的情况下使用。")],alignment=ft.MainAxisAlignment.START),self.fetch_models_button,self.progress_ring,ft.Divider(),ft.Row(controls=[self.analyzer_model_dd, self.generator_model_dd], spacing=20),ft.Divider(),self.save_settings_button], spacing=15)
         
         self.prompt_text_fields.clear()
         
@@ -264,6 +266,17 @@ class TiebaGPTApp:
         if is_comment: return ft.Container(content=post_column, padding=ft.padding.only(left=30, top=8, bottom=8, right=5), border=ft.border.only(left=ft.border.BorderSide(2, ft.Colors.GREY_300)), bgcolor=ft.Colors.GREY_100, border_radius=ft.border_radius.all(4))
         else: return ft.Column([post_column, ft.Divider(height=1, thickness=1)])
 
+    def _try_get_effective_api_key(self, from_ui: bool = False) -> str:
+        if from_ui and hasattr(self, 'api_key_input'):
+            return self.api_key_input.value.strip()
+        saved_key = self.settings.get("api_key", "")
+        if saved_key:
+            return saved_key
+        env_key = os.getenv("GEMINI_API_KEY", "")
+        if env_key:
+            return env_key
+        return ""
+
     async def initialize_app(self):
         self.settings = core.load_settings()
         await self.log_message("设置已加载。")
@@ -275,14 +288,18 @@ class TiebaGPTApp:
             await self.log_message(f"配置需要更新 (用户版本: {user_v}, 最新版本: {default_v})。正在提示用户...")
             await self._show_prompt_update_dialog(user_v, default_v)
             await self.log_message("配置更新流程结束。")
-        if self.settings.get("api_key"):
+        effective_key = self._try_get_effective_api_key()
+        if effective_key:
             try:
-                self.gemini_client = genai.Client(api_key=self.settings["api_key"])
+                self.gemini_client = genai.Client(api_key=effective_key)
                 await self.log_message("Gemini Client 初始化成功。")
-            except Exception as e: await self.log_message(f"使用已保存的Key初始化失败: {e}，请前往设置更新。")
+                self.search_button.disabled = False
+            except Exception as e:
+                await self.log_message(f"使用已配置的Key初始化失败: {e}，请前往设置更新。")
+                self.search_button.disabled = True
         else:
-            await self.log_message("未找到API Key，请前往设置页面配置。"); self.search_button.disabled = True
-        self.page.update()
+            await self.log_message("未找到API Key，请前往设置页面配置。")
+            self.search_button.disabled = True
 
     async def log_message(self, message: str):
         current_log = self.status_log.value if self.status_log.value else ""
@@ -299,7 +316,29 @@ class TiebaGPTApp:
             else: self.previous_view_name = "analysis"
         else: self.previous_view_name = "analysis"
         self.view_container.controls = [self.build_settings_view()]
-        self.api_key_input.value = self.settings.get("api_key", "")
+
+        env_key = os.getenv("GEMINI_API_KEY", "")
+        saved_key = self.settings.get("api_key", "")
+
+        self.api_key_input.disabled = False
+        self.save_api_key_switch.disabled = False
+
+        if saved_key:
+            self.api_key_input.value = saved_key
+            self.api_key_input.hint_text = "已从配置文件加载"
+            self.save_api_key_switch.value = True
+            await self.log_message("API Key 已从配置文件加载。")
+        elif env_key:
+            self.api_key_input.value = env_key
+            self.api_key_input.hint_text = "已从环境变量加载 (若保存将写入配置文件)"
+            self.save_api_key_switch.value = False
+            await self.log_message("API Key 已从环境变量加载，您可以选择将其保存到配置文件。")
+        else:
+            self.api_key_input.value = ""
+            self.api_key_input.hint_text = "请输入您的 API Key"
+            self.save_api_key_switch.value = False
+            await self.log_message("请在输入框中配置 API Key。")
+
         self._populate_model_dropdowns(self.settings.get("available_models", []))
         self.analyzer_model_dd.value = self.settings.get("analyzer_model")
         self.generator_model_dd.value = self.settings.get("generator_model")
@@ -412,16 +451,28 @@ class TiebaGPTApp:
         self.validate_settings(None); self.page.update()
 
     async def save_settings_click(self, e):
-        self.settings["api_key"] = self.api_key_input.value.strip()
+        if self.save_api_key_switch.value:
+            self.settings["api_key"] = self.api_key_input.value.strip()
+            await self.log_message("API Key 已保存至配置文件。")
+        else:
+            self.settings["api_key"] = ""
+            await self.log_message("API Key 未保存至配置文件。")
         self.settings["analyzer_model"] = self.analyzer_model_dd.value
         self.settings["generator_model"] = self.generator_model_dd.value
         core.save_settings(self.settings); await self.log_message("设置已保存！")
-        if self.settings["api_key"]:
+        current_effective_key = self._try_get_effective_api_key(from_ui=True)
+        if current_effective_key:
             try:
-                self.gemini_client = genai.Client(api_key=self.settings["api_key"]); await self.log_message("Gemini Client 已使用新设置重新初始化。")
+                self.gemini_client = genai.Client(api_key=current_effective_key)
+                await self.log_message("Gemini Client 已使用新设置重新初始化。")
                 self.search_button.disabled = False
-            except Exception as ex: await self.log_message(f"新Key无效: {ex}"); self.search_button.disabled = True
-        else: self.search_button.disabled = True
+            except Exception as ex:
+                self.gemini_client = None
+                await self.log_message(f"提供的 Key 无效: {ex}")
+                self.search_button.disabled = True
+        else:
+            self.gemini_client = None
+            self.search_button.disabled = True
         self.page.open(ft.SnackBar(ft.Text("设置已保存并应用!"), bgcolor=ft.Colors.GREEN))
         self.save_settings_button.disabled = True; self.page.update()
 
