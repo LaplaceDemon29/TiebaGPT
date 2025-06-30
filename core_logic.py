@@ -16,7 +16,6 @@ SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
 POSTS_PER_PAGE = 30
-PAGES_PER_API_CALL = 4
 
 def get_app_version() -> str:
     base_version = VERSION
@@ -28,7 +27,7 @@ def get_app_version() -> str:
         return base_version
         
 def load_settings() -> dict:
-    default_settings = {"api_key": "","analyzer_model": "gemini-1.5-flash-latest","generator_model": "gemini-1.5-flash-latest","available_models": []}
+    default_settings = {"api_key": "","analyzer_model": "gemini-1.5-flash-latest","generator_model": "gemini-1.5-flash-latest","available_models": [],"color_scheme_seed": "blue","pages_per_api_call": 4}
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
             user_settings = json.load(f)
@@ -325,8 +324,8 @@ async def _summarize_analyses(gemini_client: genai.Client, chunk_summaries: list
         await log_callback(f"Gemini API 整合调用失败: {e}")
         return {"error": f"整合失败: {e}"}
 
-async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.Client, tid: int, total_pages: int, model_name: str, log_callback: typing.Callable, progress_callback: typing.Callable) -> dict:
-    await log_callback(f"--- 开始对TID {tid} 进行分块分析，共 {total_pages} 页，每块 {PAGES_PER_API_CALL} 页 ---")
+async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.Client, tid: int, total_pages: int, model_name: str, log_callback: typing.Callable, progress_callback: typing.Callable, pages_per_call: int) -> dict:
+    await log_callback(f"--- 开始对TID {tid} 进行分块分析，共 {total_pages} 页，每块 {pages_per_call} 页 ---")
     chunk_results = []
     
     thread_obj, _, _ = await fetch_full_thread_data(tieba_client, tid, log_callback, page_num=1)
@@ -335,13 +334,13 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
     
     main_post_text = f"[帖子标题]: {thread_obj.title}\n[主楼内容]\n{format_contents(thread_obj.contents)}"
 
-    total_chunks = (total_pages + PAGES_PER_API_CALL - 1) // PAGES_PER_API_CALL
+    total_chunks = (total_pages + pages_per_call - 1) // pages_per_call
     current_chunk = 0
 
-    for i in range(1, total_pages + 1, PAGES_PER_API_CALL):
+    for i in range(1, total_pages + 1, pages_per_call):
         current_chunk += 1
         page_start = i
-        page_end = min(i + PAGES_PER_API_CALL - 1, total_pages)
+        page_end = min(i + pages_per_call - 1, total_pages)
         
         await progress_callback(current_chunk, total_chunks, page_start, page_end)
         

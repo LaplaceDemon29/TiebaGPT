@@ -79,6 +79,8 @@ class TiebaGPTApp:
         self.model_selection_row = ft.Row(controls=[self.analyzer_model_dd, self.generator_model_dd], spacing=20)
         self.fetch_models_button = ft.ElevatedButton("测试Key并获取模型", on_click=self.fetch_models_click, icon=ft.Icons.CLOUD_DOWNLOAD)
         self.fetch_models_ring = ft.ProgressRing(visible=False, width=16, height=16)
+        self.color_seed_input = ft.TextField(label="主题种子颜色 (Material You)",hint_text="输入颜色名 (如 blue) 或HEX值 (#6750A4)",on_change=self.validate_settings)
+        self.pages_per_call_slider = ft.Slider(min=1, max=10, divisions=9,label="每次分析的页数: {value}",on_change=self.validate_settings)
         self.save_settings_button = ft.ElevatedButton("保存设置", on_click=self.save_settings_click, icon=ft.Icons.SAVE, disabled=True)
         self.prompt_text_fields = {}
         self.save_prompts_button = ft.ElevatedButton("保存 Prompts", on_click=self.save_prompts_click, icon=ft.Icons.SAVE_ALT, disabled=True)
@@ -139,11 +141,37 @@ class TiebaGPTApp:
                 )
             ], expand=True, spacing=10
         )
-        reply_card = ft.Column(controls=[ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),self.mode_selector,self.custom_view_input,ft.Row([self.generate_button, self.copy_button, self.generate_reply_ring], alignment=ft.MainAxisAlignment.CENTER),ft.Divider(),ft.Container(content=ft.Column([self.reply_display], scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.LIGHT_BLUE_50)],expand=True, spacing=10)
+        reply_card = ft.Column(controls=[ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),self.mode_selector,self.custom_view_input,ft.Row([self.generate_button, self.copy_button, self.generate_reply_ring], alignment=ft.MainAxisAlignment.CENTER),ft.Divider(),ft.Container(content=ft.Column([self.reply_display], scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.with_opacity(0.12, "primary"))],expand=True, spacing=10)
         return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), height=100, border_radius=5, padding=10)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     
     def build_settings_view(self):
-        api_settings_content = ft.Column([ft.Text("API 设置", style=ft.TextThemeStyle.TITLE_LARGE),ft.Text("请在这里配置您的Gemini API。"),self.api_key_input,ft.Row([self.save_api_key_switch,ft.IconButton(icon=ft.Icons.HELP_OUTLINE,icon_color=ft.Colors.GREY_500,tooltip="警告：开启此项会将您的API Key以明文形式保存在 settings.json 文件中，这可能导致密钥被恶意软件窃取或在分享文件时不慎泄露。建议仅在您完全了解风险的情况下使用。")],alignment=ft.MainAxisAlignment.START),ft.Row([self.fetch_models_button,self.fetch_models_ring,],vertical_alignment=ft.CrossAxisAlignment.CENTER,spacing=10),ft.Divider(),self.model_selection_row,ft.Divider(),self.save_settings_button], spacing=15);
+        api_settings_content = ft.Card(
+            elevation=2,
+            content=ft.Container(
+                padding=ft.padding.all(15),
+                content=ft.Column(
+                    [
+                        ft.Text("通用设置", style=ft.TextThemeStyle.TITLE_LARGE),
+                        ft.Text("请在这里配置您的Gemini API。"),
+                        self.api_key_input,
+                        ft.Row([self.save_api_key_switch,ft.IconButton(icon=ft.Icons.HELP_OUTLINE,icon_color="on_surface_variant",tooltip="警告：开启此项会将您的API Key以明文形式保存在 settings.json 文件中，这可能导致密钥被恶意软件窃取或在分享文件时不慎泄露。建议仅在您完全了解风险的情况下使用。")],alignment=ft.MainAxisAlignment.START),
+                        ft.Row([self.fetch_models_button,self.fetch_models_ring,],vertical_alignment=ft.CrossAxisAlignment.CENTER,spacing=10),
+                        ft.Divider(),
+                        self.model_selection_row,
+                        self.color_seed_input,
+                        ft.Container(
+                            content=ft.Text("分析设置", style=ft.TextThemeStyle.TITLE_MEDIUM),
+                            margin=ft.margin.only(top=10)
+                        ),
+                        ft.Text("调整每次调用AI进行分析时读取的帖子页数。数值越高，速度越快但单次消耗可能增加；数值越低，分析越精细但总耗时更长。", size=12, color=ft.Colors.GREY_700),
+                        self.pages_per_call_slider,
+                        ft.Divider(),
+                        self.save_settings_button
+                    ],
+                    spacing=15
+                )
+            )
+        )
         self.prompt_text_fields.clear()
         
         prompt_panel_content = self._build_prompt_editors()
@@ -163,7 +191,7 @@ class TiebaGPTApp:
             self.reply_modes_list,
             ft.Divider(height=20),
             ft.Text("回复模式生成器 Prompt", style=ft.TextThemeStyle.TITLE_SMALL),
-            ft.Text("警告：修改此处将改变‘AI生成Role和Task’按钮的行为。", color=ft.Colors.ORANGE_700, size=11),
+            ft.Text("警告：修改此处将改变‘AI生成Role和Task’按钮的行为。", color="error", size=11),
         ]
         
         if 'mode_generator' in core.PROMPTS and 'system_prompt' in core.PROMPTS['mode_generator']:
@@ -179,7 +207,22 @@ class TiebaGPTApp:
         prompt_panel_content.controls.append(ft.Divider(height=20))
         prompt_panel_content.controls.append(mode_editor_content)
 
-        prompt_settings_content = ft.ExpansionPanelList(expand_icon_color=ft.Colors.BLUE_GREY, elevation=2, controls=[ft.ExpansionPanel(header=ft.ListTile(title=ft.Text("高级：自定义 Prompt", style=ft.TextThemeStyle.TITLE_LARGE)),content=ft.Container(ft.Column([ft.Text("警告：不正确的修改可能导致程序功能异常。请仅修改文本内容。", color=ft.Colors.ORANGE_700),ft.Row([self.save_prompts_button, self.restore_prompts_button], spacing=20),ft.Divider(height=20),prompt_panel_content]), padding=ft.padding.all(15)))])
+        prompt_settings_content = ft.Card(
+            elevation=2,
+            content=ft.Container(
+                padding=ft.padding.all(15),
+                content=ft.Column(
+                    [
+                        ft.Text("高级设置", style=ft.TextThemeStyle.TITLE_LARGE),
+                        ft.Text("警告：不正确的修改可能导致程序功能异常。请仅修改文本内容。", color="error"),
+                        ft.Row([self.save_prompts_button, self.restore_prompts_button], spacing=20),
+                        ft.Divider(height=20),
+                        prompt_panel_content
+                    ],
+                    spacing=15
+                )
+            )
+        )
         settings_main_column = ft.Column([api_settings_content,ft.Divider(height=30),prompt_settings_content], spacing=15, width=800)
         return ft.Column([ft.Row([ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self.close_settings_view, tooltip="返回")]),settings_main_column], expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, scroll=ft.ScrollMode.ADAPTIVE)
 
@@ -223,7 +266,7 @@ class TiebaGPTApp:
                 left_icon = ft.Icon(
                     ft.Icons.SETTINGS_SUGGEST,
                     tooltip="内置模式",
-                    color=ft.Colors.BLUE_700
+                    color="primary"
                 )
             else:
                 left_icon = ft.Icon(
@@ -242,15 +285,15 @@ class TiebaGPTApp:
                                 ft.Column(
                                     [
                                         ft.Text(mode_name, weight=ft.FontWeight.BOLD),
-                                        ft.Text(config.get('description', 'N/A'), max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                                        ft.Text(config.get('description', 'N/A'), max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, size=12, color="on_surface_variant"),
                                     ],
                                     expand=True,
                                     spacing=2,
                                 ),
                                 ft.Row([
-                                    ft.IconButton(ft.Icons.SHARE, tooltip="分享此模式", on_click=self.share_mode_click, data=mode_id, icon_color=ft.Colors.BLUE_400),
+                                    ft.IconButton(ft.Icons.SHARE, tooltip="分享此模式", on_click=self.share_mode_click, data=mode_id, icon_color="primary"),
                                     ft.IconButton(ft.Icons.EDIT, tooltip="编辑此模式", on_click=self.open_mode_dialog, data=mode_id),
-                                    ft.IconButton(ft.Icons.DELETE_FOREVER, tooltip="删除此模式 (内置模式不可删除)", on_click=self.delete_mode_click, data=mode_id, icon_color=ft.Colors.RED_400, disabled=is_built_in),
+                                    ft.IconButton(ft.Icons.DELETE_FOREVER, tooltip="删除此模式 (内置模式不可删除)", on_click=self.delete_mode_click, data=mode_id, icon_color="error", disabled=is_built_in),
                                 ])
                             ]
                         )
@@ -260,12 +303,35 @@ class TiebaGPTApp:
         self.page.update()
 
     def _create_post_widget(self, user_name: str, content_str: str, floor_text: str, is_lz: bool = False, is_comment: bool = False) -> ft.Control:
-        user_info_row = ft.Row(controls=[ft.Icon(ft.Icons.ACCOUNT_CIRCLE, color=ft.Colors.BLUE_GREY_400, size=20), ft.Text(user_name, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)], alignment=ft.MainAxisAlignment.START, spacing=5)
-        if is_lz: user_info_row.controls.append(ft.Chip(label=ft.Text("楼主", size=10, weight=ft.FontWeight.BOLD), bgcolor=ft.Colors.BLUE_100, padding=ft.padding.all(2), height=20))
-        header_row = ft.Row(controls=[user_info_row, ft.Text(floor_text, color=ft.Colors.GREY_600, size=12)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+        user_info_row = ft.Row(controls=[ft.Icon(ft.Icons.ACCOUNT_CIRCLE, color="primary", size=20), ft.Text(user_name, weight=ft.FontWeight.BOLD, color="primary")], alignment=ft.MainAxisAlignment.START, spacing=5)
+        if is_lz: 
+            user_info_row.controls.append(
+                ft.Container(
+                    content=ft.Text(
+                        "楼主", 
+                        size=10, 
+                        weight=ft.FontWeight.BOLD, 
+                        color=ft.Colors.with_opacity(0.88, "primary")
+                    ),
+                    bgcolor=ft.Colors.with_opacity(0.12, "primary"),
+                    border_radius=100,
+                    padding=ft.padding.symmetric(horizontal=6, vertical=1) 
+                )
+            )
+        header_row = ft.Row(controls=[user_info_row, ft.Text(floor_text, color="on_surface_variant", size=12)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
         content_display = ft.Text(content_str, selectable=True)
         post_column = ft.Column(controls=[header_row, content_display], spacing=5)
-        if is_comment: return ft.Container(content=post_column, padding=ft.padding.only(left=30, top=8, bottom=8, right=5), border=ft.border.only(left=ft.border.BorderSide(2, ft.Colors.GREY_300)), bgcolor=ft.Colors.GREY_100, border_radius=ft.border_radius.all(4))
+        if is_comment:
+            bgcolor = ft.Colors.with_opacity(0.04, "primary")
+            if is_lz:
+                bgcolor = ft.Colors.with_opacity(0.07, "primary")
+            return ft.Container(
+                content=post_column,
+                padding=ft.padding.only(left=30, top=8, bottom=8, right=5),
+                border=ft.border.only(left=ft.border.BorderSide(2, "outline_variant")),
+                bgcolor=bgcolor,
+                border_radius=ft.border_radius.all(4)
+            )
         else: return ft.Column([post_column, ft.Divider(height=1, thickness=1)])
 
     def _try_get_effective_api_key(self, from_ui: bool = False) -> str:
@@ -278,6 +344,33 @@ class TiebaGPTApp:
         if env_key:
             return env_key
         return ""
+
+    def _get_contrast_colors(self, base_color_role: str, text_opacity: float = 0.9) -> tuple[str, str]:
+
+        if 0 <= text_opacity <= 0.8:
+            bg_color = ft.Colors.with_opacity(1 - text_opacity, base_color_role)
+            text_color = f"on_{base_color_role}"
+            return (text_color, bg_color)
+
+        elif 0.8 < text_opacity <= 1:
+            bg_opacity = 1.0 - text_opacity
+            
+            text_color = ft.Colors.with_opacity(text_opacity, base_color_role)
+            bg_color = ft.Colors.with_opacity(bg_opacity, base_color_role)
+            
+            return (text_color, bg_color)
+        
+        else:
+            raise ValueError(f"Invalid text_opacity")
+
+    def _show_snackbar(self, message: str, color_role: str = "primary", text_opacity: float = 0.1) -> None: # 0.1 for inverse color
+        text_color, bg_color = self._get_contrast_colors(color_role,text_opacity)
+        self.page.open(
+            ft.SnackBar(
+                content=ft.Text(message, color=text_color),
+                bgcolor=bg_color
+            )
+        )
 
     def _rebuild_model_dropdowns(self, models_list: list, preferred_analyzer: str = None, preferred_generator: str = None):
         new_analyzer_dd = ft.Dropdown(
@@ -322,6 +415,9 @@ class TiebaGPTApp:
     async def initialize_app(self):
         self.settings = core.load_settings()
         await self.log_message("设置已加载。")
+        seed_color = self.settings.get("color_scheme_seed")
+        if seed_color:
+            self.page.theme = ft.Theme(color_scheme_seed=seed_color)
         success, msg = core.load_prompts()
         await self.log_message(msg)
         if not success: self.search_button.disabled = True
@@ -381,6 +477,8 @@ class TiebaGPTApp:
             self.save_api_key_switch.value = False
             await self.log_message("请在输入框中配置 API Key。")
 
+        self.color_seed_input.value = self.settings.get("color_scheme_seed", "blue")
+        self.pages_per_call_slider.value = self.settings.get("pages_per_api_call", 4)
         self._rebuild_model_dropdowns(self.settings.get("available_models"))
         self.save_prompts_button.disabled = True; await self.log_message("已打开设置页面。"); self.validate_settings(None); self.page.update()
 
@@ -407,7 +505,7 @@ class TiebaGPTApp:
                     temp_dict = temp_dict.setdefault(key, {})
         core.save_prompts(current_prompts)
         self.save_prompts_button.disabled = True
-        self.page.open(ft.SnackBar(ft.Text("Prompts 保存成功！"), bgcolor=ft.Colors.GREEN))
+        self._show_snackbar("Prompts 保存成功！", color_role="primary")
         await self.log_message("Prompts 已更新并保存。"); self.page.update()
 
     async def restore_prompts_click(self, e):
@@ -430,9 +528,9 @@ class TiebaGPTApp:
             self.progress_ring.visible = False
             if success:
                 self.view_container.controls = [self.build_settings_view()]
-                self.page.open(ft.SnackBar(ft.Text("已彻底恢复默认 Prompts！"), bgcolor=ft.Colors.BLUE))
+                self._show_snackbar("已彻底恢复默认 Prompts！",color_role="secondary")
             else:
-                self.page.open(ft.SnackBar(ft.Text(f"恢复失败: {msg}"), bgcolor=ft.Colors.RED))
+                self._show_snackbar(f"恢复失败: {msg}", color_role="error")
             
             self.page.update()
 
@@ -446,9 +544,9 @@ class TiebaGPTApp:
             self.progress_ring.visible = False
             if success:
                 self.view_container.controls = [self.build_settings_view()]
-                self.page.open(ft.SnackBar(ft.Text("增量恢复成功！自定义模式已保留。"), bgcolor=ft.Colors.GREEN))
+                self._show_snackbar("增量恢复成功！自定义模式已保留。", color_role="primary")
             else:
-                self.page.open(ft.SnackBar(ft.Text(f"增量恢复失败: {msg}"), bgcolor=ft.Colors.RED))
+                self._show_snackbar(f"增量恢复失败: {msg}", color_role="error")
 
             self.page.update()
 
@@ -484,10 +582,10 @@ class TiebaGPTApp:
             await self.log_message(f"成功获取 {len(result)} 个可用模型！正在刷新UI...")
             self.settings["available_models"] = result
             self._rebuild_model_dropdowns(result, preferred_analyzer=previous_analyzer, preferred_generator=previous_generator)
-            self.page.open(ft.SnackBar(ft.Text("模型列表获取并刷新成功!"), bgcolor=ft.Colors.GREEN))
+            self._show_snackbar("模型列表获取并刷新成功!", color_role="primary")
         else:
             await self.log_message(f"获取模型失败: {result}")
-            self.page.open(ft.SnackBar(ft.Text(f"获取失败: {result}"), bgcolor=ft.Colors.RED))
+            self._show_snackbar(f"获取失败: {result}", color_role="error")
         self.fetch_models_ring.visible = False; self.fetch_models_button.disabled = False
         self.validate_settings(None); self.page.update()
 
@@ -500,6 +598,14 @@ class TiebaGPTApp:
             await self.log_message("API Key 未保存至配置文件。")
         self.settings["analyzer_model"] = self.analyzer_model_dd.value
         self.settings["generator_model"] = self.generator_model_dd.value
+        self.settings["pages_per_api_call"] = int(self.pages_per_call_slider.value)
+        new_seed_color = self.color_seed_input.value.strip()
+        self.settings["color_scheme_seed"] = new_seed_color
+        if new_seed_color:
+            self.page.theme = ft.Theme(color_scheme_seed=new_seed_color)
+        else:
+            self.page.theme = None
+        await self.log_message(f"主题颜色已更新为: {new_seed_color or '默认'}")
         core.save_settings(self.settings); await self.log_message("设置已保存！")
         current_effective_key = self._try_get_effective_api_key(from_ui=True)
         if current_effective_key:
@@ -514,12 +620,8 @@ class TiebaGPTApp:
         else:
             self.gemini_client = None
             self.search_button.disabled = True
-        self.page.open(ft.SnackBar(ft.Text("设置已保存并应用!"), bgcolor=ft.Colors.GREEN))
+        self._show_snackbar("设置已保存并应用!", color_role="primary")
         self.save_settings_button.disabled = True; self.page.update()
-
-    def _populate_model_dropdowns(self, model_list: list):
-        options = [ft.dropdown.Option(model) for model in model_list]
-        self.analyzer_model_dd.options = options.copy(); self.generator_model_dd.options = options.copy()
 
     def validate_settings(self, e):
         is_valid = (self.api_key_input.value and self.analyzer_model_dd.value and self.generator_model_dd.value)
@@ -665,7 +767,7 @@ class TiebaGPTApp:
         self.analysis_display.value = "⏳ 开始分批次分析，请稍候..."; self.analysis_progress_bar.visible = True; self.analysis_progress_bar.value = 0
         self.page.update()
         async with tb.Client() as tieba_client:
-            self.analysis_result = await core.analyze_stance_by_page(tieba_client, self.gemini_client, current_tid, self.total_post_pages, self.settings["analyzer_model"], self.log_message, self._update_analysis_progress)
+            self.analysis_result = await core.analyze_stance_by_page(tieba_client, self.gemini_client, current_tid, self.total_post_pages, self.settings["analyzer_model"], self.log_message, self._update_analysis_progress, self.settings.get("pages_per_api_call", 4))
         self.analysis_progress_bar.visible = False; self.analyze_button.disabled = False
         if "summary" in self.analysis_result:
             self.analysis_cache[current_tid] = self.analysis_result; self.current_analysis_tid = current_tid
@@ -769,6 +871,7 @@ class TiebaGPTApp:
         sorted_modes = core.get_sorted_reply_modes()
         default_mode_ids = core.get_default_mode_ids()
         options = []
+        valid_mode_ids = set()
 
         def truncate_text(text, max_length=30):
             if len(text) > max_length:
@@ -784,9 +887,12 @@ class TiebaGPTApp:
                     text=display_text
                 )
             )
+            valid_mode_ids.add(mode_id)
 
         self.mode_selector.options = options
-        if options:
+        if self.current_mode_id and self.current_mode_id in valid_mode_ids:
+            self.mode_selector.value = self.current_mode_id
+        elif options:
             self.mode_selector.value = options[0].key
             self.current_mode_id = options[0].key
         else:
@@ -798,7 +904,7 @@ class TiebaGPTApp:
         self.current_mode_id = e.control.value
         self._update_custom_view_visibility()
 
-    async def copy_reply_click(self, e): self.page.set_clipboard(self.reply_display.value); self.page.open(ft.SnackBar(ft.Text("回复已复制到剪贴板!"), duration=2000)); self.page.update()
+    async def copy_reply_click(self, e): self.page.set_clipboard(self.reply_display.value); self._show_snackbar("回复已复制到剪贴板!","green"); self.page.update()
     async def back_to_initial(self, e): self.view_container.controls = [self.build_initial_view()]; self.page.update()
     async def back_to_thread_list(self, e): 
         self.view_container.controls = [self.build_thread_list_view()]; self.page.update(); await asyncio.sleep(0.1)
@@ -819,7 +925,7 @@ class TiebaGPTApp:
             self.save_prompts_button.disabled = True
         
         await self.log_message(f"回复模式 '{config.get('name')}' (ID: {mode_id}) 已更新并保存到文件。")
-        self.page.open(ft.SnackBar(ft.Text(success_message), bgcolor=ft.Colors.GREEN))
+        self._show_snackbar(success_message, color_role="primary")
         
         self._build_reply_modes_editor_list()
 
@@ -833,7 +939,7 @@ class TiebaGPTApp:
         modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
         
         if mode_id_to_share not in modes:
-            self.page.open(ft.SnackBar(ft.Text(f"错误：找不到模式 '{mode_id_to_share}'"), bgcolor=ft.Colors.RED))
+            self._show_snackbar(f"错误：找不到模式 '{mode_id_to_share}'", color_role="error")
             return
 
         mode_config = modes[mode_id_to_share]
@@ -850,10 +956,10 @@ class TiebaGPTApp:
         try:
             json_string = json.dumps(share_data, indent=2, ensure_ascii=False)
             self.page.set_clipboard(json_string)
-            self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_config.get('name')}' 已复制到剪贴板！"), bgcolor=ft.Colors.GREEN))
+            self._show_snackbar(f"模式 '{mode_config.get('name')}' 已复制到剪贴板！", color_role="primary")
         except Exception as ex:
             await self.log_message(f"序列化模式 '{mode_config.get('name')}' 失败: {ex}")
-            self.page.open(ft.SnackBar(ft.Text("复制失败，请检查日志。"), bgcolor=ft.Colors.RED))
+            self._show_snackbar("复制失败，请检查日志。", color_role="error")
             
         self.page.update()
 
@@ -944,7 +1050,7 @@ class TiebaGPTApp:
             except Exception as ex:
                 await self.log_message(f"导入模式时发生未知错误: {ex}")
                 self.page.close(import_dialog)
-                self.page.open(ft.SnackBar(ft.Text("发生未知错误，请检查日志。"), bgcolor=ft.Colors.RED))
+                self._show_snackbar("发生未知错误，请检查日志。", color_role="error")
 
         import_dialog = ft.AlertDialog(
             modal=True,
@@ -1014,10 +1120,10 @@ class TiebaGPTApp:
             if success:
                 dialog_role_input.value = result.get("role", "")
                 dialog_task_input.value = result.get("task", "")
-                self.page.open(ft.SnackBar(ft.Text("AI生成成功！"), bgcolor=ft.Colors.GREEN))
+                self._show_snackbar("AI生成成功！", color_role="primary")
                 await update_is_custom_switch(None)
             else:
-                self.page.open(ft.SnackBar(ft.Text(f"AI生成失败: {result}"), bgcolor=ft.Colors.RED))
+                self._show_snackbar(f"AI生成失败: {result}", color_role="error")
 
             ai_generate_button.disabled = False
             dialog_ai_progress.visible = False
@@ -1055,6 +1161,7 @@ class TiebaGPTApp:
             title=ft.Text("添加新模式" if is_new_mode else "编辑模式"),
             content=ft.Column(
                 controls=[
+                    ft.Container(margin=ft.margin.only(top=5)),
                     dialog_mode_name_input,
                     dialog_mode_desc_input,
                     ft.Row([ai_generate_button, dialog_ai_progress], vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -1065,6 +1172,7 @@ class TiebaGPTApp:
                 ],
                 scroll=ft.ScrollMode.ADAPTIVE,
                 spacing=15,
+                width=500,
                 height=500,
             ),
             actions=[
@@ -1091,7 +1199,7 @@ class TiebaGPTApp:
                 del core.PROMPTS['reply_generator']['modes'][mode_id]
                 core.save_prompts(core.PROMPTS)
                 await self.log_message(f"回复模式 '{mode_name}' 已删除。")
-                self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name}' 已删除!"), bgcolor=ft.Colors.GREEN))
+                self._show_snackbar(f"模式 '{mode_name}' 已删除!", color_role="primary")
             
             self.page.close(confirm_dialog)
             self._build_reply_modes_editor_list()
@@ -1116,11 +1224,11 @@ class TiebaGPTApp:
             
             self.progress_ring.visible = False
             if success:
-                self.page.open(ft.SnackBar(ft.Text(msg), bgcolor=ft.Colors.GREEN))
+                self._show_snackbar(msg, color_role="primary")
                 if self.previous_view_name == "settings":
                      self.view_container.controls = [self.build_settings_view()]
             else:
-                self.page.open(ft.SnackBar(ft.Text(f"更新失败: {msg}"), bgcolor=ft.Colors.RED))
+                self._show_snackbar(f"更新失败: {msg}",color_role="error")
             self.page.update()
 
         async def handle_incremental_update(e):
@@ -1135,11 +1243,11 @@ class TiebaGPTApp:
             
             self.progress_ring.visible = False
             if success:
-                 self.page.open(ft.SnackBar(ft.Text("已彻底恢复为默认配置！"), bgcolor=ft.Colors.BLUE))
+                 self._show_snackbar("已彻底恢复为默认配置！", color_role="secondary")
                  if self.previous_view_name == "settings":
                      self.view_container.controls = [self.build_settings_view()]
             else:
-                self.page.open(ft.SnackBar(ft.Text(f"恢复失败: {msg}"), bgcolor=ft.Colors.RED))
+                self._show_snackbar(f"恢复失败: {msg}",color_role="error")
             self.page.update()
 
         update_dialog = ft.AlertDialog(
