@@ -1,6 +1,7 @@
 import flet as ft
 import asyncio
 import json
+import uuid
 from google import genai
 import core_logic as core
 import aiotieba as tb
@@ -20,8 +21,8 @@ class TiebaGPTApp:
 
         # --- 状态变量 ---
         self.settings = {}; self.gemini_client = None; self.threads = []; self.selected_thread = None
-        self.discussion_text = ""; self.analysis_result = None; self.current_mode = None
-        self.custom_viewpoint = None; self.current_page_num = 1; self.previous_view_name = "initial"; self.thread_list_scroll_offset = 0.0
+        self.discussion_text = ""; self.analysis_result = None; self.current_mode_id = None
+        self.custom_input = None; self.current_page_num = 1; self.previous_view_name = "initial"; self.thread_list_scroll_offset = 0.0
         self.analysis_cache = {}
         self.current_analysis_tid = None
         self.current_search_query = None
@@ -61,7 +62,7 @@ class TiebaGPTApp:
         self.analyze_button = ft.ElevatedButton("分析整个帖子", icon=ft.Icons.INSIGHTS_ROUNDED, on_click=self.analyze_thread_click, tooltip="对整个帖子进行分批AI分析", disabled=True)
         self.analysis_progress_bar = ft.ProgressBar(visible=False)
         self.mode_selector = ft.Dropdown(label="回复模式", on_change=self.on_mode_change, disabled=True, expand=True)
-        self.custom_view_input = ft.TextField(label="请输入您的自定义观点或要抬杠的主题", multiline=True, max_lines=3, visible=False)
+        self.custom_view_input = ft.TextField(label="请输入此模式所需的自定义内容", multiline=True, max_lines=3, visible=False)
         self.generate_button = ft.ElevatedButton("生成回复", on_click=self.generate_reply_click, icon=ft.Icons.AUTO_AWESOME, disabled=True)
         self.copy_button = ft.IconButton(icon=ft.Icons.CONTENT_COPY_ROUNDED, tooltip="复制回复内容", on_click=self.copy_reply_click, disabled=True)
         self.prev_post_page_button = ft.IconButton(icon=ft.Icons.KEYBOARD_ARROW_LEFT, on_click=self.load_prev_post_page, tooltip="上一页", disabled=True)
@@ -81,7 +82,25 @@ class TiebaGPTApp:
         
         self.view_container = ft.Column([self.build_initial_view()], expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
+    def _create_prompt_editor(self, key_path: tuple, value: any) -> ft.Control:
+        """Creates a text field for editing a prompt value, handling lists correctly."""
+        label = " -> ".join(key_path)
+        is_list = isinstance(value, list)
+        display_value = "\n".join(value) if is_list else str(value)
 
+        tf = ft.TextField(
+            label=label,
+            value=display_value,
+            multiline=True,
+            min_lines=3 if is_list else 2,
+            max_lines=8,
+            text_size=12,
+            on_change=self.on_prompt_change,
+            data={'is_list': is_list}  # Store type info here
+        )
+        self.prompt_text_fields[key_path] = tf
+        return tf
+        
     # --- 视图构建方法 ---
     def build_initial_view(self):
         input_row = ft.Row([self.tieba_name_input, self.search_query_input, self.sort_type_dropdown, self.search_button], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
@@ -120,12 +139,14 @@ class TiebaGPTApp:
     
     def build_settings_view(self):
         api_settings_content = ft.Column([ft.Text("API 设置", style=ft.TextThemeStyle.TITLE_LARGE),ft.Text("请在这里配置您的Gemini API。"),self.api_key_input,self.fetch_models_button,self.progress_ring,ft.Divider(),ft.Row(controls=[self.analyzer_model_dd, self.generator_model_dd], spacing=20),ft.Divider(),self.save_settings_button], spacing=15)
+        
         self.prompt_text_fields.clear()
         
         prompt_panel_content = self._build_prompt_editors()
         
         self._build_reply_modes_editor_list()
-        mode_editor_content = ft.Column([
+        
+        mode_editor_content_controls = [
             ft.Text("回复模式编辑器", style=ft.TextThemeStyle.TITLE_MEDIUM),
             ft.Text("在这里添加、删除或修改AI的回复模式。"),
             ft.Row(
@@ -136,7 +157,20 @@ class TiebaGPTApp:
             ),
             ft.Divider(height=10),
             self.reply_modes_list,
-        ])
+            ft.Divider(height=20),
+            ft.Text("回复模式生成器 Prompt", style=ft.TextThemeStyle.TITLE_SMALL),
+            ft.Text("警告：修改此处将改变‘AI生成Role和Task’按钮的行为。", color=ft.Colors.ORANGE_700, size=11),
+        ]
+        
+        if 'mode_generator' in core.PROMPTS and 'system_prompt' in core.PROMPTS['mode_generator']:
+            mode_editor_content_controls.append(
+                self._create_prompt_editor(
+                    ('mode_generator', 'system_prompt'), 
+                    core.PROMPTS['mode_generator']['system_prompt']
+                )
+            )
+
+        mode_editor_content = ft.Column(mode_editor_content_controls)
         
         prompt_panel_content.controls.append(ft.Divider(height=20))
         prompt_panel_content.controls.append(mode_editor_content)
@@ -148,41 +182,51 @@ class TiebaGPTApp:
     def _build_prompt_editors(self) -> ft.Column:
         controls_list = []
         prompts = core.PROMPTS
-        def create_editor(key_path, value):
-            label = " -> ".join(key_path)
-            tf = ft.TextField(label=label, value=value, multiline=True, min_lines=2, max_lines=5, text_size=12, on_change=lambda e: self.on_prompt_change(e))
-            self.prompt_text_fields[tuple(key_path)] = tf
-            return tf
-        
+
         if 'stance_analyzer' in prompts:
+            sa_prompts = prompts['stance_analyzer']
             controls_list.append(ft.Text("讨论分析器通用规则", style=ft.TextThemeStyle.TITLE_MEDIUM))
-            controls_list.append(create_editor(('stance_analyzer', 'system_prompt'), prompts['stance_analyzer'].get('system_prompt', '')))
-            controls_list.append(create_editor(('stance_analyzer', 'tasks'), prompts['stance_analyzer'].get('tasks', '')))
+            controls_list.append(self._create_prompt_editor(('stance_analyzer', 'system_prompt'), sa_prompts.get('system_prompt', '')))
+            controls_list.append(self._create_prompt_editor(('stance_analyzer', 'tasks'), sa_prompts.get('tasks', [])))
+        
         if 'analysis_summarizer' in prompts:
+            as_prompts = prompts['analysis_summarizer']
             controls_list.append(ft.Divider(height=10))
             controls_list.append(ft.Text("分析总结器通用规则", style=ft.TextThemeStyle.TITLE_MEDIUM))
-            controls_list.append(create_editor(('analysis_summarizer', 'system_prompt'), prompts['analysis_summarizer'].get('system_prompt', '')))
-            controls_list.append(create_editor(('analysis_summarizer', 'tasks'), prompts['analysis_summarizer'].get('tasks', '')))
+            controls_list.append(self._create_prompt_editor(('analysis_summarizer', 'system_prompt'), as_prompts.get('system_prompt', '')))
+            controls_list.append(self._create_prompt_editor(('analysis_summarizer', 'tasks'), as_prompts.get('tasks', [])))
         
         if 'reply_generator' in prompts:
+            rg_prompts = prompts['reply_generator']
             controls_list.append(ft.Divider(height=10))
             controls_list.append(ft.Text("回复生成器通用规则", style=ft.TextThemeStyle.TITLE_MEDIUM))
-            gen_prompts = prompts['reply_generator']
-            if 'common_rules' in gen_prompts:
-                controls_list.append(create_editor(('reply_generator', 'common_rules', 'title'), gen_prompts['common_rules'].get('title', '')))
-                controls_list.append(create_editor(('reply_generator', 'common_rules', 'rules'), gen_prompts['common_rules'].get('rules', '')))
-        if 'mode_generator' in prompts:
-            controls_list.append(ft.Divider(height=10))
-            controls_list.append(ft.Text("回复模式生成器通用规则", style=ft.TextThemeStyle.TITLE_MEDIUM))
-            controls_list.append(ft.Text("警告：修改此处将改变‘AI生成Role和Task’按钮的行为。", color=ft.Colors.ORANGE_700, size=11))
-            controls_list.append(create_editor(('mode_generator', 'system_prompt'), prompts['mode_generator'].get('system_prompt', '')))
+            if 'common_rules' in rg_prompts:
+                cr_prompts = rg_prompts.get('common_rules', {})
+                controls_list.append(self._create_prompt_editor(('reply_generator', 'common_rules', 'rules'), cr_prompts.get('rules', [])))
 
         return ft.Column(controls_list, spacing=15)
     
     def _build_reply_modes_editor_list(self):
         self.reply_modes_list.controls.clear()
-        modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
-        for mode_name, config in modes.items():
+        sorted_modes = core.get_sorted_reply_modes()
+        default_mode_ids = core.get_default_mode_ids()
+        
+        for mode_id, config in sorted_modes:
+            mode_name = config.get('name', '未命名模式')
+            is_built_in = mode_id in default_mode_ids
+            
+            if is_built_in:
+                left_icon = ft.Icon(
+                    ft.Icons.SETTINGS_SUGGEST,
+                    tooltip="内置模式",
+                    color=ft.Colors.BLUE_700
+                )
+            else:
+                left_icon = ft.Icon(
+                    ft.Icons.MODE_EDIT_OUTLINE,
+                    tooltip="自定义模式"
+                )
+
             self.reply_modes_list.controls.append(
                 ft.Card(
                     content=ft.Container(
@@ -190,7 +234,7 @@ class TiebaGPTApp:
                         content=ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             controls=[
-                                ft.Icon(ft.Icons.MODE_EDIT_OUTLINE),
+                                left_icon,
                                 ft.Column(
                                     [
                                         ft.Text(mode_name, weight=ft.FontWeight.BOLD),
@@ -200,9 +244,9 @@ class TiebaGPTApp:
                                     spacing=2,
                                 ),
                                 ft.Row([
-                                    ft.IconButton(ft.Icons.SHARE, tooltip="分享此模式", on_click=self.share_mode_click, data=mode_name, icon_color=ft.Colors.BLUE_400),
-                                    ft.IconButton(ft.Icons.EDIT, tooltip="编辑此模式", on_click=self.open_mode_dialog, data=mode_name),
-                                    ft.IconButton(ft.Icons.DELETE_FOREVER, tooltip="删除此模式", on_click=self.delete_mode_click, data=mode_name, icon_color=ft.Colors.RED_400),
+                                    ft.IconButton(ft.Icons.SHARE, tooltip="分享此模式", on_click=self.share_mode_click, data=mode_id, icon_color=ft.Colors.BLUE_400),
+                                    ft.IconButton(ft.Icons.EDIT, tooltip="编辑此模式", on_click=self.open_mode_dialog, data=mode_id),
+                                    ft.IconButton(ft.Icons.DELETE_FOREVER, tooltip="删除此模式 (内置模式不可删除)", on_click=self.delete_mode_click, data=mode_id, icon_color=ft.Colors.RED_400, disabled=is_built_in),
                                 ])
                             ]
                         )
@@ -272,10 +316,16 @@ class TiebaGPTApp:
     async def save_prompts_click(self, e):
         current_prompts = core.PROMPTS
         for key_path, text_field in self.prompt_text_fields.items():
+            # Use a pointer to traverse the nested dictionary
             temp_dict = current_prompts
             for i, key in enumerate(key_path):
-                if i == len(key_path) - 1: temp_dict[key] = text_field.value
-                else: temp_dict = temp_dict.get(key, {})
+                if i == len(key_path) - 1:
+                    if text_field.data and text_field.data.get('is_list', False):
+                        temp_dict[key] = [line for line in text_field.value.splitlines() if line.strip()]
+                    else:
+                        temp_dict[key] = text_field.value
+                else:
+                    temp_dict = temp_dict.setdefault(key, {})
         core.save_prompts(current_prompts)
         self.save_prompts_button.disabled = True
         self.page.open(ft.SnackBar(ft.Text("Prompts 保存成功！"), bgcolor=ft.Colors.GREEN))
@@ -543,22 +593,22 @@ class TiebaGPTApp:
             return
         
         analysis_summary = cached_analysis["summary"]
-        self.current_mode = self.mode_selector.value
-        if not self.current_mode:
+        self.current_mode_id = self.mode_selector.value
+        if not self.current_mode_id:
             await self.log_message("请先选择一个回复模式！")
             return
         
         modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
-        selected_mode_config = modes.get(self.current_mode, {})
+        selected_mode_config = modes.get(self.current_mode_id, {})
         is_custom = selected_mode_config.get('is_custom', False)
 
         if is_custom:
-            self.custom_viewpoint = self.custom_view_input.value.strip()
-            if not self.custom_viewpoint:
-                await self.log_message("使用此自定义模型时，观点不能为空！")
+            self.custom_input = self.custom_view_input.value.strip()
+            if not self.custom_input:
+                await self.log_message("使用此自定义模型时，自定义内容不能为空！")
                 return
         else:
-            self.custom_viewpoint = None
+            self.custom_input = None
 
         self.progress_ring.visible = True; self.generate_button.disabled = True; self.copy_button.disabled = True
         self.reply_display.value = "⏳ 生成中，请稍候..."
@@ -566,8 +616,8 @@ class TiebaGPTApp:
     
         generated_reply = await core.generate_reply(
             self.gemini_client, self.discussion_text, analysis_summary, 
-            self.current_mode, self.settings["generator_model"], 
-            self.log_message, custom_viewpoint=self.custom_viewpoint
+            self.current_mode_id, self.settings["generator_model"], 
+            self.log_message, custom_input=self.custom_input
         )
     
         self.reply_display.value = generated_reply
@@ -610,33 +660,50 @@ class TiebaGPTApp:
         self.page.update()
 
     def _update_custom_view_visibility(self):
-        current_mode_value = self.mode_selector.value
-        if not current_mode_value:
+        current_mode_id = self.mode_selector.value
+        if not current_mode_id:
             self.custom_view_input.visible = False
             self.page.update()
             return
 
         modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
-        selected_mode_config = modes.get(current_mode_value, {})
+        selected_mode_config = modes.get(current_mode_id, {})
         is_custom = selected_mode_config.get('is_custom', False)
         
         self.custom_view_input.visible = is_custom
         self.page.update()
 
     def _populate_mode_dropdown(self):
-        modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
-        options = [ft.dropdown.Option(key=name, text=f"{name} - {config.get('description', '')}") for name, config in modes.items()]
+        sorted_modes = core.get_sorted_reply_modes()
+        default_mode_ids = core.get_default_mode_ids()
+        options = []
+
+        def truncate_text(text, max_length=30):
+            if len(text) > max_length:
+                return text[:max_length] + "..."
+            return text
+
+        for mode_id, config in sorted_modes:
+            prefix = "⚙️ " if mode_id in default_mode_ids else "👤 "
+            display_text = f"{prefix}{config.get('name', '未命名')} - {truncate_text(config.get('description', ''))}"
+            options.append(
+                ft.dropdown.Option(
+                    key=mode_id, 
+                    text=display_text
+                )
+            )
+
         self.mode_selector.options = options
         if options:
             self.mode_selector.value = options[0].key
-            self.current_mode = options[0].key
+            self.current_mode_id = options[0].key
         else:
             self.mode_selector.value = None
-            self.current_mode = None
+            self.current_mode_id = None
         self._update_custom_view_visibility()
 
     async def on_mode_change(self, e):
-        self.current_mode = e.control.value
+        self.current_mode_id = e.control.value
         self._update_custom_view_visibility()
 
     async def copy_reply_click(self, e): self.page.set_clipboard(self.reply_display.value); self.page.open(ft.SnackBar(ft.Text("回复已复制到剪贴板!"), duration=2000)); self.page.update()
@@ -646,38 +713,42 @@ class TiebaGPTApp:
         if self.page.scroll and self.thread_list_view.uid in self.page.scroll: self.page.scroll[self.thread_list_view.uid].scroll_to(offset=self.thread_list_scroll_offset, duration=100)
         self.page.update()
 
-    async def _save_mode_and_refresh_ui(self, mode_name: str, config: dict, success_message: str):
+    async def _save_mode_and_refresh_ui(self, mode_id: str, config: dict, success_message: str):
         if 'reply_generator' not in core.PROMPTS:
             core.PROMPTS['reply_generator'] = {}
         if 'modes' not in core.PROMPTS['reply_generator']:
             core.PROMPTS['reply_generator']['modes'] = {}
             
-        core.PROMPTS['reply_generator']['modes'][mode_name] = config
+        core.PROMPTS['reply_generator']['modes'][mode_id] = config
         
         core.save_prompts(core.PROMPTS)
 
         if hasattr(self, 'save_prompts_button'):
             self.save_prompts_button.disabled = True
         
-        await self.log_message(f"回复模式 '{mode_name}' 已更新并保存到文件。")
+        await self.log_message(f"回复模式 '{config.get('name')}' (ID: {mode_id}) 已更新并保存到文件。")
         self.page.open(ft.SnackBar(ft.Text(success_message), bgcolor=ft.Colors.GREEN))
         
         self._build_reply_modes_editor_list()
+
+        if self.previous_view_name == "analysis":
+            self._populate_mode_dropdown()
+
         self.page.update()
 
     async def share_mode_click(self, e):
-        mode_name_to_share = e.control.data
+        mode_id_to_share = e.control.data
         modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
         
-        if mode_name_to_share not in modes:
-            self.page.open(ft.SnackBar(ft.Text(f"错误：找不到模式 '{mode_name_to_share}'"), bgcolor=ft.Colors.RED))
+        if mode_id_to_share not in modes:
+            self.page.open(ft.SnackBar(ft.Text(f"错误：找不到模式 '{mode_id_to_share}'"), bgcolor=ft.Colors.RED))
             return
 
-        mode_config = modes[mode_name_to_share]
+        mode_config = modes[mode_id_to_share]
         
         share_data = {
-            "tieba_gpt_mode_version": "1.3",
-            "name": mode_name_to_share,
+            "tieba_gpt_mode_version": core.PROMPTS.get('prompts_version', 0),
+            "name": mode_config.get("name", ""),
             "description": mode_config.get("description", ""),
             "is_custom": mode_config.get("is_custom", False),
             "role": mode_config.get("role", ""),
@@ -687,32 +758,42 @@ class TiebaGPTApp:
         try:
             json_string = json.dumps(share_data, indent=2, ensure_ascii=False)
             self.page.set_clipboard(json_string)
-            self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name_to_share}' 已复制到剪贴板！"), bgcolor=ft.Colors.GREEN))
+            self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_config.get('name')}' 已复制到剪贴板！"), bgcolor=ft.Colors.GREEN))
         except Exception as ex:
-            await self.log_message(f"序列化模式 '{mode_name_to_share}' 失败: {ex}")
+            await self.log_message(f"序列化模式 '{mode_config.get('name')}' 失败: {ex}")
             self.page.open(ft.SnackBar(ft.Text("复制失败，请检查日志。"), bgcolor=ft.Colors.RED))
             
         self.page.update()
 
-    async def show_overwrite_confirmation(self, mode_name, new_config):
+    async def show_overwrite_confirmation(self, existing_mode_id, existing_mode_name, new_config):
         async def handle_overwrite(ev):
             self.page.close(confirm_dialog)
             await self._save_mode_and_refresh_ui(
-                mode_name, 
+                existing_mode_id,
                 new_config, 
-                success_message=f"模式 '{mode_name}' 已成功覆盖!"
+                success_message=f"模式 '{existing_mode_name}' 已成功覆盖!"
             )
         
         confirm_dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text("模式已存在"),
-            content=ft.Text(f"名为“{mode_name}”的模式已存在。您要覆盖它吗？"),
+            title=ft.Text("模式名称冲突"),
+            content=ft.Text(f"名为“{existing_mode_name}”的模式已存在。您要用导入的新配置覆盖它吗？"),
             actions=[
                 ft.TextButton("取消", on_click=lambda _: self.page.close(confirm_dialog)),
                 ft.FilledButton("覆盖", on_click=handle_overwrite),
             ]
         )
         self.page.open(confirm_dialog)
+
+    def _create_mode_config_from_inputs(self, name: str, description: str, role: str, task: str) -> dict:
+        stripped_task = task.strip()
+        return {
+            "name": name.strip(),
+            "description": description.strip(),
+            "role": role.strip(),
+            "task": stripped_task,
+            "is_custom": "{user_custom_input}" in stripped_task
+        }
 
 
     async def open_import_dialog(self, e):
@@ -738,31 +819,36 @@ class TiebaGPTApp:
                 if not isinstance(data, dict) or "tieba_gpt_mode_version" not in data:
                     raise ValueError("这不是一个有效的TiebaGPT模式分享码。")
                 
-                mode_name = data.get("name")
-                if not mode_name:
+                imported_name = data.get("name")
+                if not imported_name:
                     raise ValueError("导入的模式缺少'name'字段。")
                 
-                new_config = {
-                    "description": data.get("description", ""),
-                    "is_custom": data.get("is_custom", False),
-                    "role": data.get("role", ""),
-                    "task": data.get("task", ""),
-                }
+                new_config = self._create_mode_config_from_inputs(
+                    name=imported_name,
+                    description=data.get("description", ""),
+                    role=data.get("role", ""),
+                    task=data.get("task", "")
+                )
 
                 self.page.close(import_dialog)
 
                 modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
-                if mode_name in modes:
-                    await self.show_overwrite_confirmation(mode_name, new_config)
+                existing_mode_id = None
+                for mode_id, config in modes.items():
+                    if config.get("name") == imported_name:
+                        existing_mode_id = mode_id
+                        break
+
+                if existing_mode_id:
+                    await self.show_overwrite_confirmation(existing_mode_id, imported_name, new_config)
                 else:
-                    await self._save_mode_and_refresh_ui(mode_name,new_config,success_message=f"模式 '{mode_name}' 已成功导入!")
+                    new_id = str(uuid.uuid4())
+                    await self._save_mode_and_refresh_ui(new_id, new_config, success_message=f"模式 '{imported_name}' 已成功导入!")
 
             except json.JSONDecodeError:
-                dialog_textfield.error_text = "无效的JSON格式，请检查代码是否完整。"
-                import_dialog.update()
+                dialog_textfield.error_text = "无效的JSON格式，请检查代码是否完整。"; import_dialog.update()
             except ValueError as ve:
-                dialog_textfield.error_text = str(ve)
-                import_dialog.update()
+                dialog_textfield.error_text = str(ve); import_dialog.update()
             except Exception as ex:
                 await self.log_message(f"导入模式时发生未知错误: {ex}")
                 self.page.close(import_dialog)
@@ -771,30 +857,31 @@ class TiebaGPTApp:
         import_dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("导入回复模式"),
-            content=ft.Container(
-                content=dialog_textfield,
-                width=500,
-            ),
+            content=ft.Container(content=dialog_textfield, width=500),
             actions=[
                 ft.TextButton("取消", on_click=lambda _: self.page.close(import_dialog)),
                 ft.FilledButton("导入", on_click=do_import),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-
         self.page.open(import_dialog)
         self.page.update()
 
         
     async def open_mode_dialog(self, e):
-        mode_name_to_edit = e.control.data if hasattr(e.control, 'data') else None
-        is_new_mode = mode_name_to_edit is None
+        mode_id_to_edit = e.control.data if hasattr(e.control, 'data') else None
+        is_new_mode = mode_id_to_edit is None
         
-        dialog_mode_name_input = ft.TextField(label="模式名称 (唯一)", disabled=not is_new_mode)
+        dialog_mode_name_input = ft.TextField(label="模式名称 (唯一)")
         dialog_mode_desc_input = ft.TextField(label="模式描述")
-        dialog_is_custom_switch = ft.Switch(label="需要自定义观点输入 (is_custom)", value=False)
+        dialog_is_custom_switch = ft.Switch(label="需要自定义输入 (自动检测)", disabled=True)
+
+        async def update_is_custom_switch(e):
+            dialog_is_custom_switch.value = "{user_custom_input}" in dialog_task_input.value
+            self.page.update()
+
         dialog_role_input = ft.TextField(label="角色 (Role)", multiline=True, min_lines=3, max_lines=5)
-        dialog_task_input = ft.TextField(label="任务 (Task)", multiline=True, min_lines=5, max_lines=10, hint_text="对于需要自定义观点的模式，请使用 {user_viewpoint} 作为占位符。")
+        dialog_task_input = ft.TextField(label="任务 (Task)", multiline=True, min_lines=5, max_lines=10, hint_text="若此模式需要用户输入，请使用 {user_custom_input} 作为占位符。", on_change=update_is_custom_switch)
         dialog_ai_progress = ft.ProgressRing(visible=False, width=16, height=16)
         
         ai_generate_button = ft.ElevatedButton(
@@ -806,8 +893,8 @@ class TiebaGPTApp:
 
         if not is_new_mode:
             modes = core.PROMPTS['reply_generator']['modes']
-            config = modes.get(mode_name_to_edit, {})
-            dialog_mode_name_input.value = mode_name_to_edit
+            config = modes.get(mode_id_to_edit, {})
+            dialog_mode_name_input.value = config.get("name", "")
             dialog_mode_desc_input.value = config.get("description", "")
             dialog_is_custom_switch.value = config.get("is_custom", False)
             dialog_role_input.value = config.get("role", "")
@@ -836,6 +923,7 @@ class TiebaGPTApp:
                 dialog_role_input.value = result.get("role", "")
                 dialog_task_input.value = result.get("task", "")
                 self.page.open(ft.SnackBar(ft.Text("AI生成成功！"), bgcolor=ft.Colors.GREEN))
+                await update_is_custom_switch(None)
             else:
                 self.page.open(ft.SnackBar(ft.Text(f"AI生成失败: {result}"), bgcolor=ft.Colors.RED))
 
@@ -852,18 +940,27 @@ class TiebaGPTApp:
                 dialog_mode_name_input.update()
                 return
 
-            new_config = {
-                "description": dialog_mode_desc_input.value.strip(),
-                "is_custom": dialog_is_custom_switch.value,
-                "role": dialog_role_input.value.strip(),
-                "task": dialog_task_input.value.strip(),
-            }
+            modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
+            for mid, cfg in modes.items():
+                if cfg.get('name') == mode_name and mid != mode_id_to_edit:
+                    dialog_mode_name_input.error_text = "已存在同名模式，请使用其他名称"
+                    await self.page.update_async()
+                    return
+
+            new_config = self._create_mode_config_from_inputs(
+                name=dialog_mode_name_input.value,
+                description=dialog_mode_desc_input.value,
+                role=dialog_role_input.value,
+                task=dialog_task_input.value
+            )
+            mode_id_to_save = mode_id_to_edit if not is_new_mode else str(uuid.uuid4())
+
             self.page.close(mode_editor_dialog)
-            await self._save_mode_and_refresh_ui(mode_name, new_config, success_message=f"模式 '{mode_name}' 已保存!")
+            await self._save_mode_and_refresh_ui(mode_id_to_save, new_config, success_message=f"模式 '{mode_name}' 已保存!")
 
         mode_editor_dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text("添加新模式" if is_new_mode else f"编辑模式: {mode_name_to_edit}"),
+            title=ft.Text("添加新模式" if is_new_mode else "编辑模式"),
             content=ft.Column(
                 controls=[
                     dialog_mode_name_input,
@@ -888,7 +985,9 @@ class TiebaGPTApp:
         self.page.update()
 
     async def delete_mode_click(self, e):
-        mode_name = e.control.data
+        mode_id = e.control.data
+        modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
+        mode_name = modes.get(mode_id, {}).get("name", "未知模式")
         confirm_dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("确认删除"),
@@ -896,11 +995,10 @@ class TiebaGPTApp:
             actions_alignment=ft.MainAxisAlignment.END
         )
         async def confirm_delete(ev):
-            if mode_name in core.PROMPTS['reply_generator']['modes']:
-                del core.PROMPTS['reply_generator']['modes'][mode_name]
+            if 'reply_generator' in core.PROMPTS and 'modes' in core.PROMPTS['reply_generator'] and mode_id in core.PROMPTS['reply_generator']['modes']:
+                del core.PROMPTS['reply_generator']['modes'][mode_id]
                 core.save_prompts(core.PROMPTS)
-                self.save_prompts_button.disabled = True
-                await self.log_message(f"回复模式 '{mode_name}' 已删除并从文件更新。")
+                await self.log_message(f"回复模式 '{mode_name}' 已删除。")
                 self.page.open(ft.SnackBar(ft.Text(f"模式 '{mode_name}' 已删除!"), bgcolor=ft.Colors.GREEN))
             
             self.page.close(confirm_dialog)

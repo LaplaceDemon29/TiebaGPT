@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -139,19 +139,20 @@ def build_analysis_summarizer_prompt(chunk_summaries: list[dict]) -> str:
     ]
     return "\n".join(prompt_parts)
 
-def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mode: str, custom_viewpoint: typing.Optional[str] = None) -> str:
+def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mode_id: str, custom_input: typing.Optional[str] = None) -> str:
     gen_config = PROMPTS['reply_generator']
-    mode_config = gen_config['modes'].get(mode)
+    mode_config = gen_config['modes'].get(mode_id)
     if not mode_config:
-        raise ValueError(f"未找到名为 '{mode}' 的回复模式配置。")
-        
+        raise ValueError(f"未找到 ID 为 '{mode_id}' 的回复模式配置。")
+    
+    mode_name = mode_config.get("name", "未知模式")
     role_prompt = mode_config['role']
     task_description = mode_config['task']
     
     if mode_config.get('is_custom', False):
-        if not custom_viewpoint:
-            raise ValueError(f"使用模式 '{mode}' 时，必须提供 custom_viewpoint。")
-        task_description = task_description.format(user_viewpoint=custom_viewpoint)
+        if not custom_input:
+            raise ValueError(f"使用模式 '{mode_name}' 时，必须提供自定义输入。")
+        task_description = task_description.format(user_custom_input=custom_input)
 
     rules_config = gen_config['common_rules']
     rules_text = rules_config['title'] + "\n" + "\n".join([f"- {rule}" for rule in rules_config['rules']])
@@ -177,7 +178,6 @@ def build_mode_generator_prompt(mode_name: str, mode_description: str) -> str:
 async def generate_mode_prompts(
     client: genai.Client, model_name: str, mode_name: str, mode_description: str, log_callback: typing.Callable
 ) -> typing.Tuple[bool, typing.Union[dict, str]]:
-    """Calls Gemini to generate role and task for a new reply mode."""
     await log_callback(f"正在请求AI为模式“{mode_name}”生成Role和Task...")
     if not mode_name or not mode_description:
         return False, "模式名称和描述不能为空。"
@@ -376,10 +376,12 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
     final_analysis_result = await _summarize_analyses(gemini_client, successful_summaries, model_name, log_callback)
     return final_analysis_result
 
-async def generate_reply(client: genai.Client, discussion_text: str, analysis_summary: str, mode: str, model_name: str, log_callback: typing.Callable, custom_viewpoint: typing.Optional[str] = None) -> str:
-    await log_callback(f"--- 使用模型 {model_name} 和 “{mode}”模式生成回复 ---")
+async def generate_reply(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, custom_input: typing.Optional[str] = None) -> str:
+    modes = PROMPTS.get('reply_generator', {}).get('modes', {})
+    mode_name = modes.get(mode_id, {}).get("name", "未知模式")
+    await log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式生成回复 ---")
     try:
-        prompt = build_reply_generator_prompt(discussion_text, analysis_summary, mode, custom_viewpoint)
+        prompt = build_reply_generator_prompt(discussion_text, analysis_summary, mode_id, custom_input)
     except Exception as e:
         return f"构建Prompt失败: {e}"
 
@@ -399,3 +401,32 @@ async def generate_reply(client: genai.Client, discussion_text: str, analysis_su
             return f"生成回复失败：AI未能生成内容。\n\n这通常是由于安全设置或内容审查策略导致的。\n\n(API反馈: {feedback_info})"
     except Exception as e:
         await log_callback(f"Gemini API 回复生成失败: {e}"); return f"生成回复失败: {e}"
+
+_DEFAULT_MODE_IDS = None
+
+def get_default_mode_ids() -> set:
+    global _DEFAULT_MODE_IDS
+    if _DEFAULT_MODE_IDS is not None:
+        return _DEFAULT_MODE_IDS
+    try:
+        with open(DEFAULT_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            default_prompts = json.load(f)
+        mode_ids = set(default_prompts.get('reply_generator', {}).get('modes', {}).keys())
+        _DEFAULT_MODE_IDS = mode_ids
+        return mode_ids
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+def get_sorted_reply_modes() -> list[tuple[str, dict]]:
+    modes = PROMPTS.get('reply_generator', {}).get('modes', {})
+    if not modes:
+        return []
+    default_mode_ids = get_default_mode_ids()
+
+    def sort_key(item: tuple[str, dict]) -> tuple[int, str]:
+        mode_id, config = item
+        priority = 0 if mode_id in default_mode_ids else 1
+        name = config.get('name', '')
+        return (priority, name)
+
+    return sorted(modes.items(), key=sort_key)
