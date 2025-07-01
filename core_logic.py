@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -177,7 +177,7 @@ def build_mode_generator_prompt(mode_name: str, mode_description: str) -> str:
 async def generate_mode_prompts(
     client: genai.Client, model_name: str, mode_name: str, mode_description: str, log_callback: typing.Callable
 ) -> typing.Tuple[bool, typing.Union[dict, str]]:
-    await log_callback(f"正在请求AI为模式“{mode_name}”生成Role和Task...")
+    log_callback(f"正在请求AI为模式“{mode_name}”生成Role和Task...")
     if not mode_name or not mode_description:
         return False, "模式名称和描述不能为空。"
 
@@ -190,7 +190,7 @@ async def generate_mode_prompts(
             client.models.generate_content, model=model_name, contents=contents, config=generation_config
         )
         if response.text:
-            await log_callback("AI生成成功！")
+            log_callback("AI生成成功！")
             result = json.loads(response.text)
             if "role" in result and "task" in result:
                 return True, result
@@ -200,13 +200,13 @@ async def generate_mode_prompts(
             feedback_info = "未知原因"
             if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
                 feedback_info = str(response.prompt_feedback)
-            await log_callback(f"AI未返回有效文本。反馈: {feedback_info}")
+            log_callback(f"AI未返回有效文本。反馈: {feedback_info}")
             return False, f"AI未能生成内容。可能原因：内容安全策略触发。反馈: {feedback_info}"
     except json.JSONDecodeError:
-        await log_callback("AI返回的内容不是有效的JSON格式。")
+        log_callback("AI返回的内容不是有效的JSON格式。")
         return False, "AI返回的内容不是有效的JSON格式。"
     except Exception as e:
-        await log_callback(f"调用Gemini生成模式时出错: {e}")
+        log_callback(f"调用Gemini生成模式时出错: {e}")
         return False, f"调用API时出错: {e}"
 
 async def fetch_gemini_models(api_key: str) -> typing.Tuple[bool, typing.Union[list[str], str]]:
@@ -219,18 +219,18 @@ async def fetch_gemini_models(api_key: str) -> typing.Tuple[bool, typing.Union[l
 async def fetch_threads_by_page(client: tb.Client, tieba_name: str, page_num: int, sort_type: ThreadSortType, log_callback: typing.Callable) -> list[tb_typing.Thread]:
     try:
         sort_map = {ThreadSortType.REPLY: "回复时间", ThreadSortType.CREATE: "发布时间", ThreadSortType.HOT: "热门"}
-        await log_callback(f"正在获取“{tieba_name}”吧第 {page_num} 页的帖子 (排序: {sort_map.get(sort_type, '默认')})...")
+        log_callback(f"正在获取“{tieba_name}”吧第 {page_num} 页的帖子 (排序: {sort_map.get(sort_type, '默认')})...")
         return await client.get_threads(tieba_name, pn=page_num, sort=sort_type)
-    except Exception as e: await log_callback(f"获取第 {page_num} 页帖子失败: {e}"); return []
+    except Exception as e: log_callback(f"获取第 {page_num} 页帖子失败: {e}"); return []
 
 async def search_threads_by_page(client: tb.Client, tieba_name: str, query: str, page_num: int, log_callback: typing.Callable) -> list[tb_typing.Thread]:
     try:
-        await log_callback(f"正在“{tieba_name}”吧中搜索关键词“{query}”的第 {page_num} 页...")
+        log_callback(f"正在“{tieba_name}”吧中搜索关键词“{query}”的第 {page_num} 页...")
         return await client.search_exact(tieba_name, query, pn=page_num, only_thread=True)
-    except Exception as e: await log_callback(f"搜索关键词“{query}”失败: {e}"); return []
+    except Exception as e: log_callback(f"搜索关键词“{query}”失败: {e}"); return []
 
 async def fetch_full_thread_data(client: tb.Client, tid: int, log_callback: typing.Callable, page_num: int = 1) -> tuple[typing.Optional[tb_typing.Thread], typing.Optional[tb_typing.Posts], dict[int, list[tb_typing.Comment]]]:
-    await log_callback(f"正在获取帖子 {tid} 第 {page_num} 页的数据...")
+    log_callback(f"正在获取帖子 {tid} 第 {page_num} 页的数据...")
     
     posts_obj: tb_typing.Posts = await client.get_posts(tid, pn=page_num, rn=POSTS_PER_PAGE)
     
@@ -304,28 +304,28 @@ async def _analyze_single_chunk(gemini_client: genai.Client, discussion_text: st
         else:
             return {"error": "AI未能生成有效的摘要内容。"}
     except Exception as e:
-        await log_callback(f"Gemini API 分块分析调用失败: {e}")
+        log_callback(f"Gemini API 分块分析调用失败: {e}")
         return {"error": str(e)}
 
 async def _summarize_analyses(gemini_client: genai.Client, chunk_summaries: list[dict], model_name: str, log_callback: typing.Callable) -> dict:
-    await log_callback(f"--- 使用模型 {model_name} 整合 {len(chunk_summaries)} 个摘要块 ---")
+    log_callback(f"--- 使用模型 {model_name} 整合 {len(chunk_summaries)} 个摘要块 ---")
     prompt = build_analysis_summarizer_prompt(chunk_summaries)
     generation_config = {"response_mime_type": "text/plain"}
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
     try:
-        await log_callback("正在调用 Gemini API 进行最终整合...")
+        log_callback("正在调用 Gemini API 进行最终整合...")
         response = await asyncio.to_thread(gemini_client.models.generate_content, model=model_name, contents=contents, config=generation_config)
-        await log_callback("Gemini API 整合调用成功。")
+        log_callback("Gemini API 整合调用成功。")
         if response.text and response.text.strip():
             return {"summary": response.text.strip()}
         else:
             return {"error": "AI未能生成有效的最终摘要。"}
     except Exception as e:
-        await log_callback(f"Gemini API 整合调用失败: {e}")
+        log_callback(f"Gemini API 整合调用失败: {e}")
         return {"error": f"整合失败: {e}"}
 
 async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.Client, tid: int, total_pages: int, model_name: str, log_callback: typing.Callable, progress_callback: typing.Callable, pages_per_call: int) -> dict:
-    await log_callback(f"--- 开始对TID {tid} 进行分块分析，共 {total_pages} 页，每块 {pages_per_call} 页 ---")
+    log_callback(f"--- 开始对TID {tid} 进行分块分析，共 {total_pages} 页，每块 {pages_per_call} 页 ---")
     chunk_results = []
     
     thread_obj, _, _ = await fetch_full_thread_data(tieba_client, tid, log_callback, page_num=1)
@@ -342,19 +342,19 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
         page_start = i
         page_end = min(i + pages_per_call - 1, total_pages)
         
-        await progress_callback(current_chunk, total_chunks, page_start, page_end)
+        progress_callback(current_chunk, total_chunks, page_start, page_end)
         
         chunk_posts_list = []
         chunk_comments = {}
         for page_num in range(page_start, page_end + 1):
-            await log_callback(f"  正在获取第 {page_num} 页内容...")
+            log_callback(f"  正在获取第 {page_num} 页内容...")
             _, posts_obj, comments = await fetch_full_thread_data(tieba_client, tid, log_callback, page_num=page_num)
             if posts_obj and posts_obj.objs:
                 chunk_posts_list.extend(posts_obj.objs)
                 chunk_comments.update(comments)
         
         if not chunk_posts_list:
-            await log_callback(f"警告：块 {current_chunk} (页 {page_start}-{page_end}) 没有获取到内容，跳过。")
+            log_callback(f"警告：块 {current_chunk} (页 {page_start}-{page_end}) 没有获取到内容，跳过。")
             continue
         
         discussion_part_text = format_discussion_text(None, chunk_posts_list, chunk_comments) # 传入 thread=None
@@ -369,7 +369,7 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
         return {"error": first_error}
     
     if len(successful_summaries) == 1:
-        await log_callback("只有一个分析块成功，直接返回该块摘要。")
+        log_callback("只有一个分析块成功，直接返回该块摘要。")
         return {"summary": successful_summaries[0]}
         
     final_analysis_result = await _summarize_analyses(gemini_client, successful_summaries, model_name, log_callback)
@@ -378,7 +378,7 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
 async def generate_reply(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, custom_input: typing.Optional[str] = None) -> str:
     modes = PROMPTS.get('reply_generator', {}).get('modes', {})
     mode_name = modes.get(mode_id, {}).get("name", "未知模式")
-    await log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式生成回复 ---")
+    log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式生成回复 ---")
     try:
         prompt = build_reply_generator_prompt(discussion_text, analysis_summary, mode_id, custom_input)
     except Exception as e:
@@ -387,19 +387,19 @@ async def generate_reply(client: genai.Client, discussion_text: str, analysis_su
     generation_config = {"response_mime_type": "text/plain"}
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
     try:
-        await log_callback("正在调用 Gemini API 生成回复...")
+        log_callback("正在调用 Gemini API 生成回复...")
         response = await asyncio.to_thread(client.models.generate_content, model=model_name, contents=contents, config=generation_config)
         if response.text and response.text.strip():
-            await log_callback("Gemini API 回复生成成功。")
+            log_callback("Gemini API 回复生成成功。")
             return response.text.strip()
         else:
             feedback_info = "未知原因"
             if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
                 feedback_info = str(response.prompt_feedback)
-            await log_callback(f"Gemini API 未返回有效文本。可能原因：内容安全策略触发。反馈: {feedback_info}")
+            log_callback(f"Gemini API 未返回有效文本。可能原因：内容安全策略触发。反馈: {feedback_info}")
             return f"生成回复失败：AI未能生成内容。\n\n这通常是由于安全设置或内容审查策略导致的。\n\n(API反馈: {feedback_info})"
     except Exception as e:
-        await log_callback(f"Gemini API 回复生成失败: {e}"); return f"生成回复失败: {e}"
+        log_callback(f"Gemini API 回复生成失败: {e}"); return f"生成回复失败: {e}"
 
 _DEFAULT_MODE_IDS = None
 
