@@ -111,7 +111,7 @@ class TiebaGPTApp:
     # --- 视图构建方法 ---
     def build_initial_view(self):
         input_row = ft.Row([self.tieba_name_input, self.search_query_input, self.sort_type_dropdown, self.search_button], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
-        app_info_row = ft.Row([ft.Text(f"v{self.app_version}", color=ft.Colors.GREY_600), ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.GREY_400), ft.Text("作者: LaplaceDemon", color=ft.Colors.GREY_600), ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.GREY_400), ft.Text("Made with Gemini", color=ft.Colors.GREY_600), ft.Icon(ft.Icons.AUTO_AWESOME, size=14, color=ft.Colors.AMBER_500)], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
+        app_info_row = ft.Row([ft.Text(f"v{self.app_version}", color="primary"), ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.GREY_400), ft.TextButton(text="GitHub", icon=ft.Icons.CODE, url="https://github.com/LaplaceDemon29/TiebaGPT", tooltip="查看项目源代码")], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
         return ft.Column([ft.Row([self.settings_button], alignment=ft.MainAxisAlignment.END), ft.Text("贴吧智能回复助手", style=ft.TextThemeStyle.HEADLINE_MEDIUM), input_row, self.progress_ring, ft.Divider(), ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), expand=True, border_radius=5, padding=10), ft.Container(content=app_info_row, padding=ft.padding.only(top=10, bottom=5))], expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
 
     def build_thread_list_view(self):
@@ -261,18 +261,11 @@ class TiebaGPTApp:
         for mode_id, config in sorted_modes:
             mode_name = config.get('name', '未命名模式')
             is_built_in = mode_id in default_mode_ids
-            
-            if is_built_in:
-                left_icon = ft.Icon(
-                    ft.Icons.SETTINGS_SUGGEST,
-                    tooltip="内置模式",
-                    color="primary"
-                )
-            else:
-                left_icon = ft.Icon(
-                    ft.Icons.MODE_EDIT_OUTLINE,
-                    tooltip="自定义模式"
-                )
+
+            info_row_controls = [ft.Text(mode_name, weight=ft.FontWeight.BOLD)]
+            if config.get('is_custom', False):
+                info_row_controls.append(self.create_tag("需输入自定义内容", "primary"))
+            info_row_controls.append(self.create_tag("内置模式" if is_built_in else "自定义模式","tertiary"))
 
             self.reply_modes_list.controls.append(
                 ft.Card(
@@ -281,10 +274,13 @@ class TiebaGPTApp:
                         content=ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             controls=[
-                                left_icon,
+                                ft.Icon(
+                                    config.get('icon', "settings_suggest"),
+                                    color="primary"
+                                ),
                                 ft.Column(
                                     [
-                                        ft.Text(mode_name, weight=ft.FontWeight.BOLD),
+                                        ft.Row(info_row_controls),
                                         ft.Text(config.get('description', 'N/A'), max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, size=12, color="on_surface_variant"),
                                     ],
                                     expand=True,
@@ -302,22 +298,23 @@ class TiebaGPTApp:
             )
         self.page.update()
 
-    def _create_post_widget(self, user_name: str, content_str: str, floor_text: str, is_lz: bool = False, is_comment: bool = False) -> ft.Control:
+    def _create_post_widget_by_user(self, user, content_str: str, floor_text: str, lz_user_name: str, is_comment: bool = False) -> ft.Control:
+        user_name = getattr(user, 'user_name', False)
+        is_lz = user_name == lz_user_name
+        is_bawu = getattr(user, 'is_bawu', False)
+        user_level = getattr(user, 'level', None)
+        ip = getattr(user, 'ip', None)
+
         user_info_row = ft.Row(controls=[ft.Icon(ft.Icons.ACCOUNT_CIRCLE, color="primary", size=20), ft.Text(user_name, weight=ft.FontWeight.BOLD, color="primary")], alignment=ft.MainAxisAlignment.START, spacing=5)
         if is_lz: 
-            user_info_row.controls.append(
-                ft.Container(
-                    content=ft.Text(
-                        "楼主", 
-                        size=10, 
-                        weight=ft.FontWeight.BOLD, 
-                        color=ft.Colors.with_opacity(0.88, "primary")
-                    ),
-                    bgcolor=ft.Colors.with_opacity(0.12, "primary"),
-                    border_radius=100,
-                    padding=ft.padding.symmetric(horizontal=6, vertical=1) 
-                )
-            )
+            user_info_row.controls.append(self.create_tag("楼主", "primary"))
+        if is_bawu:
+            user_info_row.controls.append(self.create_tag("吧务", "error"))
+        if user_level is not None and user_level > 0:
+            user_info_row.controls.append(self.create_tag(f"Lv.{user_level}", "secondary"))
+        if ip:
+            user_info_row.controls.append(self.create_tag(ip, "tertiary"))
+
         header_row = ft.Row(controls=[user_info_row, ft.Text(floor_text, color="on_surface_variant", size=12)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
         content_display = ft.Text(content_str, selectable=True)
         post_column = ft.Column(controls=[header_row, content_display], spacing=5)
@@ -370,6 +367,20 @@ class TiebaGPTApp:
                 content=ft.Text(message, color=text_color),
                 bgcolor=bg_color
             )
+        )
+
+    def create_tag(self, text: str, color_role: str, text_opacity: float = 0.88, icon: str = None) -> ft.Container:
+        controls = []
+        text_color,bg_color = self._get_contrast_colors(color_role, text_opacity)
+        if icon:
+            controls.append(ft.Icon(name=icon, size=12, color=text_color))
+        controls.append(ft.Text(text, size=10, weight=ft.FontWeight.BOLD, color=text_color))
+            
+        return ft.Container(
+            content=ft.Row(controls, spacing=2, alignment=ft.MainAxisAlignment.CENTER),
+            bgcolor=bg_color,
+            border_radius=100,
+            padding=ft.padding.symmetric(horizontal=6, vertical=2)
         )
 
     def _rebuild_model_dropdowns(self, models_list: list, preferred_analyzer: str = None, preferred_generator: str = None):
@@ -692,7 +703,7 @@ class TiebaGPTApp:
         posts_list = posts_obj.objs
         self._build_rich_preview(self.selected_thread, posts_list, all_comments)
         main_post_text = f"[帖子标题]: {self.selected_thread.title}\n[主楼内容]\n{core.format_contents(self.selected_thread.contents)}"
-        discussion_part_text = core.format_discussion_text(None, posts_list, all_comments)
+        discussion_part_text = core.format_discussion_text(self.selected_thread, posts_list, all_comments)
         self.discussion_text = f"{main_post_text}\n{discussion_part_text}"
     
         self.post_page_display.value = f"第 {self.current_post_page} / {self.total_post_pages} 页"
@@ -713,20 +724,19 @@ class TiebaGPTApp:
         self.preview_display.controls.clear()
         if self.current_post_page == 1:
             main_post_content = core.format_contents(thread.contents).strip()
-            if main_post_content: self.preview_display.controls.append(self._create_post_widget(lz_user_name, main_post_content, "主楼", is_lz=True))
+            if main_post_content: 
+                self.preview_display.controls.append(self._create_post_widget_by_user(thread.user, main_post_content, "主楼", lz_user_name))
         for post in posts:
             if post.floor == 1: continue
             post_content = core.format_contents(post.contents).strip()
             if not post_content: continue
-            user_name = post.user.user_name if post.user and hasattr(post.user, 'user_name') else '未知用户'
-            self.preview_display.controls.append(self._create_post_widget(user_name, post_content, f"{post.floor}楼", is_lz=(user_name == lz_user_name)))
+            self.preview_display.controls.append(self._create_post_widget_by_user(post.user, post_content, f"{post.floor}楼", lz_user_name))
             if post.pid in all_comments:
                 comment_container = ft.Column(spacing=5)
                 for comment in all_comments[post.pid]:
                     comment_content = core.format_contents(comment.contents).strip()
                     if not comment_content: continue
-                    comment_user_name = comment.user.user_name if comment.user and hasattr(comment.user, 'user_name') else '未知用户'
-                    comment_container.controls.append(self._create_post_widget(comment_user_name, comment_content, "回复", is_lz=(comment_user_name == lz_user_name), is_comment=True))
+                    comment_container.controls.append(self._create_post_widget_by_user(comment.user, comment_content, "回复", lz_user_name, is_comment=True))
                 self.preview_display.controls.append(ft.Container(content=comment_container, padding=ft.padding.only(left=20, top=5, bottom=10)))
         self.page.update()
 
@@ -922,6 +932,7 @@ class TiebaGPTApp:
         share_data = {
             "tieba_gpt_mode_version": core.PROMPTS.get('prompts_version', 0),
             "name": mode_config.get("name", ""),
+            "icon": mode_config.get("icon", "settings_suggest"),
             "description": mode_config.get("description", ""),
             "is_custom": mode_config.get("is_custom", False),
             "role": mode_config.get("role", ""),
@@ -958,14 +969,15 @@ class TiebaGPTApp:
         )
         self.page.open(confirm_dialog)
 
-    def _create_mode_config_from_inputs(self, name: str, description: str, role: str, task: str) -> dict:
+    def _create_mode_config_from_inputs(self, name: str, icon: str, description: str, role: str, task: str) -> dict:
         stripped_task = task.strip()
         return {
             "name": name.strip(),
+            "icon": icon.strip(),
             "description": description.strip(),
+            "is_custom": "{user_custom_input}" in stripped_task,
             "role": role.strip(),
-            "task": stripped_task,
-            "is_custom": "{user_custom_input}" in stripped_task
+            "task": stripped_task
         }
 
 
@@ -998,6 +1010,7 @@ class TiebaGPTApp:
                 
                 new_config = self._create_mode_config_from_inputs(
                     name=imported_name,
+                    icon=data.get("icon","settings_suggest"),
                     description=data.get("description", ""),
                     role=data.get("role", ""),
                     task=data.get("task", "")
@@ -1046,6 +1059,7 @@ class TiebaGPTApp:
         is_new_mode = mode_id_to_edit is None
 
         dialog_ai_error_text = ft.Text("请先填写名称和描述", color="error", visible=False)
+        dialog_ai_result_text = ft.Text(color="tertiary", visible=False, weight=ft.FontWeight.BOLD)
 
         def clear_name_error_on_change(ev):
             if dialog_mode_name_input.error_text:
@@ -1059,6 +1073,7 @@ class TiebaGPTApp:
                 mode_editor_dialog.update()
 
         dialog_mode_name_input = ft.TextField(label="模式名称 (唯一)",on_change=clear_name_error_on_change)
+        dialog_mode_icon_input = ft.TextField(label="图标 (可选)")
         dialog_mode_desc_input = ft.TextField(label="模式描述",on_change=clear_ai_error_on_change)
         dialog_is_custom_switch = ft.Switch(label="需要自定义输入 (自动检测)", disabled=True)
 
@@ -1081,12 +1096,14 @@ class TiebaGPTApp:
             modes = core.PROMPTS['reply_generator']['modes']
             config = modes.get(mode_id_to_edit, {})
             dialog_mode_name_input.value = config.get("name", "")
+            dialog_mode_icon_input.value = config.get("icon","settings_suggest")
             dialog_mode_desc_input.value = config.get("description", "")
             dialog_is_custom_switch.value = config.get("is_custom", False)
             dialog_role_input.value = config.get("role", "")
             dialog_task_input.value = config.get("task", "")
 
         async def ai_generate_prompts(ev):
+            dialog_ai_result_text.visible = False
             mode_name = dialog_mode_name_input.value.strip()
             mode_desc = dialog_mode_desc_input.value.strip()
             if not mode_name or not mode_desc:
@@ -1109,13 +1126,21 @@ class TiebaGPTApp:
             if success:
                 dialog_role_input.value = result.get("role", "")
                 dialog_task_input.value = result.get("task", "")
-                self._show_snackbar("AI生成成功！", color_role="primary")
+                dialog_ai_result_text.value = "✓ 生成成功!"
+                dialog_ai_result_text.color = "tertiary"
+                dialog_ai_result_text.visible = True
                 update_is_custom_switch(None)
             else:
-                self._show_snackbar(f"AI生成失败: {result}", color_role="error")
+                dialog_ai_result_text.value = f"✗ 生成失败: {result}"
+                dialog_ai_result_text.color = "error"
+                dialog_ai_result_text.visible = True
 
             ai_generate_button.disabled = False
             dialog_ai_progress.visible = False
+            mode_editor_dialog.update()
+
+            await asyncio.sleep(2)
+            dialog_ai_result_text.visible = False
             mode_editor_dialog.update()
 
         ai_generate_button.on_click = ai_generate_prompts
@@ -1136,6 +1161,7 @@ class TiebaGPTApp:
 
             new_config = self._create_mode_config_from_inputs(
                 name=dialog_mode_name_input.value,
+                icon=dialog_mode_icon_input.value if dialog_mode_icon_input.value else "settings_suggest",
                 description=dialog_mode_desc_input.value,
                 role=dialog_role_input.value,
                 task=dialog_task_input.value
@@ -1152,8 +1178,9 @@ class TiebaGPTApp:
                 controls=[
                     ft.Container(margin=ft.margin.only(top=5)),
                     dialog_mode_name_input,
+                    dialog_mode_icon_input,
                     dialog_mode_desc_input,
-                    ft.Row([ai_generate_button, dialog_ai_progress, dialog_ai_error_text], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Row([ai_generate_button, dialog_ai_progress, dialog_ai_error_text,dialog_ai_result_text], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     ft.Divider(),
                     dialog_is_custom_switch,
                     dialog_role_input,

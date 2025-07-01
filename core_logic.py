@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -266,6 +266,35 @@ def format_contents(contents: tb_typing.contents) -> str:
 
 def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post], all_comments: dict[int, list[tb_typing.Comment]]) -> str:
     formatted_list = []
+
+    lz_user_name = ""
+    if thread and thread.user and hasattr(thread.user, 'user_name'):
+        lz_user_name = thread.user.user_name
+
+    def format_user_info(user) -> str:
+        if not user:
+            return "(用户: 未知用户)"
+
+        parts = []
+        user_name = getattr(user, 'user_name', '未知用户')
+        parts.append(f"用户: {user_name}")
+
+        if lz_user_name and user_name == lz_user_name:
+            parts.append("楼主")
+
+        if getattr(user, 'is_bawu', False):
+            parts.append("吧务")
+        
+        level = getattr(user, 'level', None)
+        if level is not None and level > 0:
+            parts.append(f"Lv.{level}")
+
+        ip_addr = getattr(user, 'ip', None)
+        if ip_addr:
+            parts.append(f"IP:{ip_addr}")
+        
+        return f"({', '.join(parts)})"
+
     if posts:
         formatted_list.append("---")
         formatted_list.append("[讨论区]")
@@ -278,8 +307,8 @@ def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post]
         if not post_text:
             continue
             
-        user_name = post.user.user_name if post.user and hasattr(post.user, 'user_name') else '未知用户'
-        formatted_list.append(f"\n[回复 {post.floor}楼] (用户: {user_name})")
+        user_info_str = format_user_info(post.user)
+        formatted_list.append(f"\n[回复 {post.floor}楼] {user_info_str}")
         formatted_list.append(post_text)
         
         if post.pid in all_comments:
@@ -287,8 +316,8 @@ def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post]
                 comment_text = format_contents(comment.contents).strip()
                 if not comment_text:
                     continue
-                comment_user_name = comment.user.user_name if comment.user and hasattr(comment.user, 'user_name') else '未知用户'
-                formatted_list.append(f"  [楼中楼 to {post.floor}楼, #{j+1}] (用户: {comment_user_name})")
+                comment_user_info_str = format_user_info(comment.user)
+                formatted_list.append(f"  [楼中楼 to {post.floor}楼, #{j+1}] {comment_user_info_str}")
                 formatted_list.append(f"  > {comment_text}")
                 
     return "\n".join(formatted_list)
@@ -357,7 +386,7 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
             log_callback(f"警告：块 {current_chunk} (页 {page_start}-{page_end}) 没有获取到内容，跳过。")
             continue
         
-        discussion_part_text = format_discussion_text(None, chunk_posts_list, chunk_comments) # 传入 thread=None
+        discussion_part_text = format_discussion_text(thread_obj, chunk_posts_list, chunk_comments)
         full_discussion_text = f"{main_post_text}\n{discussion_part_text}"
 
         chunk_result = await _analyze_single_chunk(gemini_client, full_discussion_text, model_name, log_callback)
