@@ -32,10 +32,8 @@ class TiebaGPTApp:
 
         # --- UI 控件 ---
         # -- 通用 --
-        self.status_log = ft.TextField(
-            label="状态日志", multiline=True, read_only=True, expand=True,
-            border=ft.InputBorder.NONE, min_lines=5, text_size=10
-        )
+        self.status_log = ft.ListView(expand=True, spacing=5)
+        self.copy_log_button = ft.IconButton(icon=ft.Icons.COPY_ALL, on_click=self.copy_log_click, tooltip="复制所有日志")
         self.progress_ring = ft.ProgressRing(visible=False)
         self.settings_button = ft.IconButton(icon=ft.Icons.SETTINGS, on_click=self.open_settings_view, tooltip="设置")
         # -- 初始页/列表页 --
@@ -112,7 +110,7 @@ class TiebaGPTApp:
     def build_initial_view(self):
         input_row = ft.Row([self.tieba_name_input, self.search_query_input, self.sort_type_dropdown, self.search_button], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
         app_info_row = ft.Row([ft.Text(f"v{self.app_version}", color="primary"), ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.GREY_400), ft.TextButton(text="GitHub", icon=ft.Icons.CODE, url="https://github.com/LaplaceDemon29/TiebaGPT", tooltip="查看项目源代码")], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
-        return ft.Column([ft.Row([self.settings_button], alignment=ft.MainAxisAlignment.END), ft.Text("贴吧智能回复助手", style=ft.TextThemeStyle.HEADLINE_MEDIUM), input_row, self.progress_ring, ft.Divider(), ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), expand=True, border_radius=5, padding=10), ft.Container(content=app_info_row, padding=ft.padding.only(top=10, bottom=5))], expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
+        return ft.Column([ft.Row([self.settings_button], alignment=ft.MainAxisAlignment.END), ft.Text("贴吧智能回复助手", style=ft.TextThemeStyle.HEADLINE_MEDIUM), input_row, self.progress_ring, ft.Divider(), self._build_status_log_section(expand=True), ft.Container(content=app_info_row, padding=ft.padding.only(top=10, bottom=5))], expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
 
     def build_thread_list_view(self):
         title_text = f"“{self.tieba_name_input.value}”吧的帖子"
@@ -142,7 +140,7 @@ class TiebaGPTApp:
             ], expand=True, spacing=10
         )
         reply_card = ft.Column(controls=[ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),self.mode_selector,self.custom_view_input,ft.Row([self.generate_button, self.copy_button, self.generate_reply_ring], alignment=ft.MainAxisAlignment.CENTER),ft.Divider(),ft.Container(content=ft.Column([self.reply_display], scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.with_opacity(0.12, "primary"))],expand=True, spacing=10)
-        return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),ft.Container(self.status_log, border=ft.border.all(1, ft.Colors.OUTLINE), height=100, border_radius=5, padding=10)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),self._build_status_log_section(height=100)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     
     def build_settings_view(self):
         api_settings_content = ft.Card(
@@ -298,6 +296,14 @@ class TiebaGPTApp:
             )
         self.page.update()
 
+    def _build_status_log_section(self, expand: bool = False, height: int = None) -> ft.Column:
+        log_container = ft.Container(self.status_log,border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10)
+        if expand:
+            log_container.expand = True
+        elif height is not None:
+            log_container.height = height
+        return ft.Column(controls=[ft.Row([ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),self.copy_log_button,],alignment=ft.MainAxisAlignment.SPACE_BETWEEN,vertical_alignment=ft.CrossAxisAlignment.CENTER),log_container],expand=expand)
+
     def _create_post_widget_by_user(self, user, content_str: str, floor_text: str, lz_user_name: str, is_comment: bool = False) -> ft.Control:
         user_name = getattr(user, 'user_name', False)
         is_lz = user_name == lz_user_name
@@ -360,12 +366,13 @@ class TiebaGPTApp:
         else:
             raise ValueError(f"Invalid text_opacity")
 
-    def _show_snackbar(self, message: str, color_role: str = "primary", text_opacity: float = 0.1) -> None: # 0.1 for inverse color
+    def _show_snackbar(self, message: str, color_role: str = "primary", text_opacity: float = 0.1, duration: int = 2000) -> None: # 0.1 for inverse color
         text_color, bg_color = self._get_contrast_colors(color_role,text_opacity)
         self.page.open(
             ft.SnackBar(
                 content=ft.Text(message, color=text_color),
-                bgcolor=bg_color
+                bgcolor=bg_color,
+                duration=duration
             )
         )
 
@@ -451,11 +458,14 @@ class TiebaGPTApp:
             self.search_button.disabled = True
 
     def log_message(self, message: str):
-        current_log = self.status_log.value if self.status_log.value else ""
-        new_log = f"{current_log}{message}\n"
-        lines = new_log.splitlines()
-        if len(lines) > 100: new_log = "\n".join(lines[-100:]) + "\n"
-        self.status_log.value = new_log; self.status_log.cursor_position = len(new_log); self.page.update()
+        log_entry = ft.Text(message, size=10, selectable=True)
+        self.status_log.controls.append(log_entry)
+        if len(self.status_log.controls) > 100:
+            self.status_log.controls.pop(0)
+        if self.status_log.page:
+            self.status_log.update()
+            self.status_log.scroll_to(offset=-1, duration=300)
+        self.page.update()
     
     def open_settings_view(self, e):
         if isinstance(self.view_container.controls[0], ft.Column) and len(self.view_container.controls[0].controls) > 1 and hasattr(self.view_container.controls[0].controls[1], 'value'):
@@ -723,7 +733,7 @@ class TiebaGPTApp:
         lz_user_name = thread.user.user_name if thread.user and hasattr(thread.user, 'user_name') else ''
         self.preview_display.controls.clear()
         if self.current_post_page == 1:
-            main_post_content = core.format_contents(thread.contents).strip()
+            main_post_content = core.format_contents(thread.contents).strip() or thread.title.strip()
             if main_post_content: 
                 self.preview_display.controls.append(self._create_post_widget_by_user(thread.user, main_post_content, "主楼", lz_user_name))
         for post in posts:
@@ -890,6 +900,17 @@ class TiebaGPTApp:
         self._update_custom_view_visibility()
 
     def copy_reply_click(self, e): self.page.set_clipboard(self.reply_display.value); self._show_snackbar("回复已复制到剪贴板!","tertiary"); self.page.update()
+
+    def copy_log_click(self, e):
+        if not self.status_log.controls:
+            self._show_snackbar("日志为空，无需复制。", "tertiary")
+            return
+        log_texts = [control.value for control in self.status_log.controls if hasattr(control, 'value')]
+        full_log = "\n".join(log_texts)
+        self.page.set_clipboard(full_log)
+        self._show_snackbar("所有日志已成功复制到剪贴板！", "primary")
+        self.page.update()
+
     def back_to_initial(self, e): self.view_container.controls = [self.build_initial_view()]; self.page.update()
     async def back_to_thread_list(self, e): 
         self.view_container.controls = [self.build_thread_list_view()]; self.page.update(); await asyncio.sleep(0.1)

@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
