@@ -171,7 +171,7 @@ def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mo
 {rules_text}
 """.strip()
 
-def build_reply_optimizer_prompt(discussion_text: str, analysis_summary: str, mode_id: str, reply_draft: str) -> str:
+def build_reply_optimizer_prompt(discussion_text: str, analysis_summary: str, mode_id: str, reply_draft: str, custom_input: typing.Optional[str] = None) -> str:
     optimizer_template = PROMPTS.get('reply_optimizer', {}).get('system_prompt')
     if not optimizer_template:
         raise ValueError("未找到 'reply_optimizer' 的 prompt 模板配置。")
@@ -182,6 +182,12 @@ def build_reply_optimizer_prompt(discussion_text: str, analysis_summary: str, mo
     
     role_prompt = mode_config['role']
     task_prompt = mode_config['task']
+
+    if mode_config.get('is_custom', False):
+        if not custom_input:
+            raise ValueError(f"使用模式 '{mode_config.get('name')}' 时，必须提供自定义输入。")
+        task_prompt = task_prompt.format(user_custom_input=custom_input)
+
     return optimizer_template.format(
         role_prompt=role_prompt,
         task_prompt=task_prompt,
@@ -493,13 +499,13 @@ async def generate_reply(client: genai.Client, discussion_text: str, analysis_su
     except Exception as e:
         log_callback(f"Gemini API 回复生成失败: {e}"); return f"生成回复失败: {e}"
 
-async def optimize_reply(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, reply_draft: str) -> str:
+async def optimize_reply(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, reply_draft: str, custom_input: typing.Optional[str] = None) -> str:
     modes = PROMPTS.get('reply_generator', {}).get('modes', {})
     mode_name = modes.get(mode_id, {}).get("name", "未知模式")
     log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式优化已有回复 ---")
     
     try:
-        prompt = build_reply_optimizer_prompt(discussion_text, analysis_summary, mode_id, reply_draft)
+        prompt = build_reply_optimizer_prompt(discussion_text, analysis_summary, mode_id, reply_draft, custom_input)
     except Exception as e:
         return f"构建优化Prompt失败: {e}"
     generation_config = {"response_mime_type": "text/plain"}

@@ -707,7 +707,7 @@ class TiebaGPTApp:
                 self._show_snackbar(f"颜色 '{new_seed_color}' 无效，主题未更改。", color_role="error")
                 self.color_seed_input.value = current_seed_color
         core.save_settings(self.settings); self.log_message("设置已保存！")
-        
+
         current_effective_key = self._try_get_effective_api_key(from_ui=True)
         if current_effective_key:
             try:
@@ -915,6 +915,18 @@ class TiebaGPTApp:
             self.log_message("请先选择一个回复/优化模式！", LogLevel.WARNING)
             return
 
+        modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
+        selected_mode_config = modes.get(self.current_mode_id, {})
+        is_custom = selected_mode_config.get('is_custom', False)
+
+        if is_custom:
+            self.custom_input = self.custom_view_input.value.strip()
+            if not self.custom_input:
+                self.log_message("使用此自定义模型时，自定义内容不能为空！", LogLevel.WARNING)
+                return
+        else:
+            self.custom_input = None
+
         self.generate_reply_ring.visible = True
         self.generate_button.disabled = True
         self.optimize_button.disabled = True
@@ -925,7 +937,7 @@ class TiebaGPTApp:
         optimized_reply = await core.optimize_reply(
             self.gemini_client, self.discussion_text, cached_analysis["summary"],
             self.current_mode_id, self.settings["generator_model"],
-            self.log_message, reply_draft=reply_draft
+            self.log_message, reply_draft=reply_draft, custom_input=self.custom_input
         )
 
         self.reply_display.value = optimized_reply
