@@ -60,11 +60,13 @@ class TiebaGPTApp:
         self.reply_display = ft.Markdown(selectable=True, code_theme="atom-one-light")
         self.analyze_button = ft.ElevatedButton("分析整个帖子", icon=ft.Icons.INSIGHTS_ROUNDED, on_click=self.analyze_thread_click, tooltip="对整个帖子进行分批AI分析", disabled=True)
         self.analysis_progress_bar = ft.ProgressBar(visible=False)
-        self.mode_selector = ft.Dropdown(label="回复模式", on_change=self.on_mode_change, disabled=True, expand=True)
+        self.mode_selector = ft.Dropdown(label="回复模式", on_change=self.on_mode_change, disabled=True)
         self.custom_view_input = ft.TextField(label="请输入此模式所需的自定义内容", multiline=True, max_lines=3, visible=False)
         self.generate_button = ft.ElevatedButton("生成回复", on_click=self.generate_reply_click, icon=ft.Icons.AUTO_AWESOME, disabled=True)
         self.generate_reply_ring = ft.ProgressRing(visible=False, width=16, height=16)
         self.copy_button = ft.IconButton(icon=ft.Icons.CONTENT_COPY_ROUNDED, tooltip="复制回复内容", on_click=self.copy_reply_click, disabled=True)
+        self.reply_draft_input = ft.TextField(label="或在此处输入您的回复草稿进行优化",multiline=True,min_lines=3, max_lines=5, on_change=self.on_draft_input_change)
+        self.optimize_button = ft.ElevatedButton("优化回复", on_click=self.optimize_reply_click,icon=ft.Icons.AUTO_FIX_HIGH, disabled=True)
         self.prev_post_page_button = ft.IconButton(icon=ft.Icons.KEYBOARD_ARROW_LEFT, on_click=self.load_prev_post_page, tooltip="上一页", disabled=True)
         self.next_post_page_button = ft.IconButton(icon=ft.Icons.KEYBOARD_ARROW_RIGHT, on_click=self.load_next_post_page, tooltip="下一页", disabled=True)
         self.post_page_display = ft.Text("第 1 / 1 页", weight=ft.FontWeight.BOLD)
@@ -132,15 +134,48 @@ class TiebaGPTApp:
                 ft.Text("讨论状况分析", style=ft.TextThemeStyle.TITLE_MEDIUM),
                 ft.Container(
                     content=ft.Column(
-                        [self.analyze_button, self.analysis_progress_bar, self.analysis_display],
-                        scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+                        controls=[            
+                            self.analyze_button, 
+                            self.analysis_progress_bar,
+                            ft.Container(
+                                content=ft.Column(
+                                    [self.analysis_display], 
+                                    scroll=ft.ScrollMode.ADAPTIVE
+                                ),
+                                bgcolor=ft.Colors.with_opacity(0.08, "tertiary"),
+                                border_radius=ft.border_radius.all(5),
+                                padding=ft.padding.all(10),
+                                expand=True,
+                            ),
+                        ],
+                        spacing=10,
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH
                     ),
-                    border=ft.border.all(1, ft.Colors.OUTLINE), border_radius=5, padding=10, expand=True
-                )
-            ], expand=True, spacing=10
+                    border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True
+                ),
+                ft.Divider(height=10),
+                self._build_status_log_section(height=140)
+            ], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
         )
-        reply_card = ft.Column(controls=[ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),self.mode_selector,self.custom_view_input,ft.Row([self.generate_button, self.copy_button, self.generate_reply_ring], alignment=ft.MainAxisAlignment.CENTER),ft.Divider(),ft.Container(content=ft.Column([self.reply_display], scroll=ft.ScrollMode.ADAPTIVE, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.with_opacity(0.12, "primary"))],expand=True, spacing=10)
-        return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True),ft.Divider(),self._build_status_log_section(height=100)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        reply_card = ft.Column(
+            controls=[
+                ft.Text("生成回复", style=ft.TextThemeStyle.TITLE_MEDIUM),
+                self.mode_selector,
+                self.custom_view_input, ft.Divider(height=15), self.reply_draft_input, 
+                ft.Row([self.generate_button, self.optimize_button, self.copy_button, self.generate_reply_ring], alignment=ft.MainAxisAlignment.CENTER), 
+                ft.Divider(height=15), 
+                ft.Container(
+                    content=ft.Column(
+                        [self.reply_display], 
+                        scroll=ft.ScrollMode.ADAPTIVE, 
+                        expand=True,
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+                    ),
+                    border=ft.border.all(1, ft.Colors.OUTLINE),border_radius=5,padding=10,expand=True,bgcolor=ft.Colors.with_opacity(0.12, "primary")
+                )
+            ],expand=True, spacing=10
+        )
+        return ft.Column([ft.Row([ft.ElevatedButton("返回帖子列表", on_click=self.back_to_thread_list, icon=ft.Icons.ARROW_BACK), ft.Container(expand=True), self.settings_button]),ft.Text(self.selected_thread.title if self.selected_thread else "帖子", style=ft.TextThemeStyle.HEADLINE_SMALL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),ft.Divider(),ft.Row(controls=[preview_card, analysis_card, reply_card], spacing=10, expand=True)], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     
     def build_settings_view(self):
         api_settings_content = ft.Card(
@@ -814,6 +849,53 @@ class TiebaGPTApp:
     
         self.reply_display.value = generated_reply
         self.generate_reply_ring.visible = False; self.generate_button.disabled = False; self.copy_button.disabled = not bool(generated_reply)
+        self.page.update()
+
+    def _update_optimize_button_state(self):
+
+        has_draft = bool(self.reply_draft_input.value and self.reply_draft_input.value.strip())
+        self.optimize_button.disabled = not has_draft
+        if self.page:
+            self.page.update()
+
+    def on_draft_input_change(self, e):
+        self._update_optimize_button_state()
+
+    async def optimize_reply_click(self, e):
+        current_tid = self.selected_thread.tid
+        cached_analysis = self.analysis_cache.get(current_tid)
+        if not cached_analysis or "summary" not in cached_analysis:
+            self.log_message("错误：未找到分析摘要，无法优化。")
+            return
+
+        reply_draft = self.reply_draft_input.value.strip()
+        if not reply_draft:
+            self.log_message("错误：回复草稿不能为空。")
+            return
+
+        self.current_mode_id = self.mode_selector.value
+        if not self.current_mode_id:
+            self.log_message("请先选择一个回复/优化模式！")
+            return
+
+        self.generate_reply_ring.visible = True
+        self.generate_button.disabled = True
+        self.optimize_button.disabled = True
+        self.copy_button.disabled = True
+        self.reply_display.value = "⏳ 优化中，请稍候..."
+        self.page.update()
+
+        optimized_reply = await core.optimize_reply(
+            self.gemini_client, self.discussion_text, cached_analysis["summary"],
+            self.current_mode_id, self.settings["generator_model"],
+            self.log_message, reply_draft=reply_draft
+        )
+
+        self.reply_display.value = optimized_reply
+        self.generate_reply_ring.visible = False
+        self.generate_button.disabled = False
+        self._update_optimize_button_state()
+        self.copy_button.disabled = not bool(optimized_reply)
         self.page.update()
 
     async def search_tieba(self, e):

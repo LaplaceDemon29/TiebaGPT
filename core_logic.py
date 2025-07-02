@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.4.6"
+VERSION = "1.5.0"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -170,6 +170,25 @@ def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mo
 ---
 {rules_text}
 """.strip()
+
+def build_reply_optimizer_prompt(discussion_text: str, analysis_summary: str, mode_id: str, reply_draft: str) -> str:
+    optimizer_template = PROMPTS.get('reply_optimizer', {}).get('system_prompt')
+    if not optimizer_template:
+        raise ValueError("未找到 'reply_optimizer' 的 prompt 模板配置。")
+    gen_config = PROMPTS['reply_generator']
+    mode_config = gen_config['modes'].get(mode_id)
+    if not mode_config:
+        raise ValueError(f"未找到 ID 为 '{mode_id}' 的回复模式配置。")
+    
+    role_prompt = mode_config['role']
+    task_prompt = mode_config['task']
+    return optimizer_template.format(
+        role_prompt=role_prompt,
+        task_prompt=task_prompt,
+        discussion_text=discussion_text[:15000],
+        analysis_summary=analysis_summary,
+        reply_draft=reply_draft
+    )
 
 def build_mode_generator_prompt(mode_name: str, mode_description: str) -> str:
     prompt_template = PROMPTS.get('mode_generator', {}).get('system_prompt')
@@ -473,6 +492,32 @@ async def generate_reply(client: genai.Client, discussion_text: str, analysis_su
             return f"生成回复失败：AI未能生成内容。\n\n这通常是由于安全设置或内容审查策略导致的。\n\n(API反馈: {feedback_info})"
     except Exception as e:
         log_callback(f"Gemini API 回复生成失败: {e}"); return f"生成回复失败: {e}"
+
+async def optimize_reply(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, reply_draft: str) -> str:
+    modes = PROMPTS.get('reply_generator', {}).get('modes', {})
+    mode_name = modes.get(mode_id, {}).get("name", "未知模式")
+    log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式优化已有回复 ---")
+    
+    try:
+        prompt = build_reply_optimizer_prompt(discussion_text, analysis_summary, mode_id, reply_draft)
+    except Exception as e:
+        return f"构建优化Prompt失败: {e}"
+    generation_config = {"response_mime_type": "text/plain"}
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+    try:
+        log_callback("正在调用 Gemini API 优化回复...")
+        response = await asyncio.to_thread(client.models.generate_content, model=model_name, contents=contents, config=generation_config)
+        if response.text and response.text.strip():
+            log_callback("Gemini API 回复优化成功。")
+            return response.text.strip()
+        else:
+            feedback_info = "未知原因"
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                feedback_info = str(response.prompt_feedback)
+            return f"优化回复失败：AI未能生成内容。\n\n(API反馈: {feedback_info})"
+    except Exception as e:
+        log_callback(f"Gemini API 回复优化失败: {e}")
+        return f"优化回复失败: {e}"
 
 _DEFAULT_MODE_IDS = None
 
