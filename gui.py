@@ -4,12 +4,31 @@ import os
 import json
 import uuid
 from google import genai
+from enum import Enum, auto
 import core_logic as core
 import aiotieba as tb
 from aiotieba import ThreadSortType
 from aiotieba import typing as tb_typing
 
+class LogLevel(Enum):
+    INFO = auto()
+    WARNING = auto()
+    ERROR = auto()
+
 class TiebaGPTApp:
+
+    LOG_LEVEL_COLOR_MAP = {
+        LogLevel.INFO: "on_surface_variant",
+        LogLevel.WARNING: "tertiary",
+        LogLevel.ERROR: "error",
+    }
+
+    LOG_LEVEL_ICON_MAP = {
+        LogLevel.INFO: ft.Icons.INFO_OUTLINE,
+        LogLevel.WARNING: ft.Icons.WARNING_AMBER_ROUNDED,
+        LogLevel.ERROR: ft.Icons.ERROR_OUTLINE,
+    }
+
     def __init__(self, page: ft.Page):
         self.page = page
         self.page.title = "贴吧智能回复助手"
@@ -480,7 +499,7 @@ class TiebaGPTApp:
         if seed_color:
             self.page.theme = ft.Theme(color_scheme_seed=seed_color)
         success, msg = core.load_prompts()
-        self.log_message(msg)
+        self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
         if not success: self.search_button.disabled = True
         status, user_v, default_v = core.check_prompts_version()
         if status == "NEEDS_UPDATE":
@@ -494,14 +513,23 @@ class TiebaGPTApp:
                 self.log_message("Gemini Client 初始化成功。")
                 self.search_button.disabled = False
             except Exception as e:
-                self.log_message(f"使用已配置的Key初始化失败: {e}，请前往设置更新。")
+                self.log_message(f"使用已配置的Key初始化失败: {e}，请前往设置更新。", LogLevel.ERROR)
                 self.search_button.disabled = True
         else:
-            self.log_message("未找到API Key，请前往设置页面配置。")
+            self.log_message("未找到API Key，请前往设置页面配置。", LogLevel.WARNING)
             self.search_button.disabled = True
 
-    def log_message(self, message: str):
-        log_entry = ft.Text(message, size=10, selectable=True)
+    def log_message(self, message: str, level: LogLevel = LogLevel.INFO):
+        log_color = self.LOG_LEVEL_COLOR_MAP.get(level, "on_surface_variant")
+        log_icon = self.LOG_LEVEL_ICON_MAP.get(level, ft.Icons.INFO_OUTLINE)
+        log_entry = ft.Row(
+            controls=[
+                ft.Icon(name=log_icon, color=log_color, size=14),
+                ft.Text(f"[{level.name}] {message}", size=11, selectable=True, color=log_color, expand=True, no_wrap=False),
+            ],
+            spacing=5,
+            vertical_alignment=ft.CrossAxisAlignment.START
+        )
         self.status_log.controls.append(log_entry)
         if len(self.status_log.controls) > 100:
             self.status_log.controls.pop(0)
@@ -587,7 +615,7 @@ class TiebaGPTApp:
             self.page.update()
 
             success, msg = core.restore_default_prompts()
-            self.log_message(msg)
+            self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
             
             self.progress_ring.visible = False
             if success:
@@ -603,7 +631,7 @@ class TiebaGPTApp:
             self.page.close(restore_dialog)
             self.page.update()
             success, msg = core.merge_default_prompts()
-            self.log_message(msg)
+            self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
 
             self.progress_ring.visible = False
             if success:
@@ -637,7 +665,7 @@ class TiebaGPTApp:
 
     async def fetch_models_click(self, e):
         api_key = self.api_key_input.value.strip()
-        if not api_key: self.log_message("请输入API Key后再获取模型。"); return
+        if not api_key: self.log_message("请输入API Key后再获取模型。", LogLevel.WARNING); return
         previous_analyzer = self.analyzer_model_dd.value
         previous_generator = self.generator_model_dd.value
         self.fetch_models_ring.visible = True; self.fetch_models_button.disabled = True; self.page.update()
@@ -648,7 +676,7 @@ class TiebaGPTApp:
             self._rebuild_model_dropdowns(result, preferred_analyzer=previous_analyzer, preferred_generator=previous_generator)
             self._show_snackbar("模型列表获取并刷新成功!", color_role="primary")
         else:
-            self.log_message(f"获取模型失败: {result}")
+            self.log_message(f"获取模型失败: {result}", LogLevel.ERROR)
             self._show_snackbar(f"获取失败: {result}", color_role="error")
         self.fetch_models_ring.visible = False; self.fetch_models_button.disabled = False
         self.validate_settings(None); self.page.update()
@@ -656,21 +684,30 @@ class TiebaGPTApp:
     def save_settings_click(self, e):
         if self.save_api_key_switch.value:
             self.settings["api_key"] = self.api_key_input.value.strip()
-            self.log_message("API Key 已保存至配置文件。")
+            self.log_message("API Key 已明文保存至配置文件，请注意安全。", LogLevel.WARNING)
         else:
             self.settings["api_key"] = ""
             self.log_message("API Key 未保存至配置文件。")
         self.settings["analyzer_model"] = self.analyzer_model_dd.value
         self.settings["generator_model"] = self.generator_model_dd.value
         self.settings["pages_per_api_call"] = int(self.pages_per_call_slider.value)
+
         new_seed_color = self.color_seed_input.value.strip()
-        self.settings["color_scheme_seed"] = new_seed_color
-        if new_seed_color:
-            self.page.theme = ft.Theme(color_scheme_seed=new_seed_color)
-        else:
-            self.page.theme = None
-        self.log_message(f"主题颜色已更新为: {new_seed_color or '默认'}")
+        current_seed_color = self.settings.get("color_scheme_seed", "blue")
+        if new_seed_color != current_seed_color:
+            try:
+                if new_seed_color:
+                    self.page.theme = ft.Theme(color_scheme_seed=new_seed_color)
+                else:
+                    self.page.theme = None
+                self.settings["color_scheme_seed"] = new_seed_color
+                self.log_message(f"主题颜色已成功更新为: {new_seed_color or '默认'}")
+            except Exception as ex:
+                self.log_message(f"无效的主题颜色: '{new_seed_color}'。错误: {ex}", LogLevel.ERROR)
+                self._show_snackbar(f"颜色 '{new_seed_color}' 无效，主题未更改。", color_role="error")
+                self.color_seed_input.value = current_seed_color
         core.save_settings(self.settings); self.log_message("设置已保存！")
+        
         current_effective_key = self._try_get_effective_api_key(from_ui=True)
         if current_effective_key:
             try:
@@ -679,7 +716,7 @@ class TiebaGPTApp:
                 self.search_button.disabled = False
             except Exception as ex:
                 self.gemini_client = None
-                self.log_message(f"提供的 Key 无效: {ex}")
+                self.log_message(f"提供的 Key 无效: {ex}", LogLevel.ERROR)
                 self.search_button.disabled = True
         else:
             self.gemini_client = None
@@ -713,7 +750,7 @@ class TiebaGPTApp:
                 self.current_analysis_tid = self.selected_thread.tid
             else:
                 self.analysis_display.value = "缓存数据格式有误，请重新分析。"
-                self.log_message(f"警告: 缓存的TID {self.selected_thread.tid} 数据缺少 'summary' 键。")
+                self.log_message(f"警告: 缓存的TID {self.selected_thread.tid} 数据缺少 'summary' 键。", LogLevel.WARNING)
         else:
             self.analysis_display.value = "点击“分析整个帖子”按钮以开始"
         
@@ -744,7 +781,7 @@ class TiebaGPTApp:
         self.preview_display.controls.clear()
     
         if not thread_obj or not posts_obj:
-            self.log_message(f"错误：无法加载TID {self.selected_thread.tid} 的第 {self.current_post_page} 页。")
+            self.log_message(f"错误：无法加载TID {self.selected_thread.tid} 的第 {self.current_post_page} 页。", LogLevel.ERROR)
             self.preview_display.controls.append(ft.Text(f"加载第 {self.current_post_page} 页失败。"))
             return
 
@@ -816,13 +853,13 @@ class TiebaGPTApp:
         current_tid = self.selected_thread.tid
         cached_analysis = self.analysis_cache.get(current_tid)
         if not cached_analysis or "summary" not in cached_analysis:
-            self.log_message("错误：未找到当前帖子的分析摘要，无法生成回复。")
+            self.log_message("错误：未找到当前帖子的分析摘要，无法生成回复。", LogLevel.ERROR)
             return
         
         analysis_summary = cached_analysis["summary"]
         self.current_mode_id = self.mode_selector.value
         if not self.current_mode_id:
-            self.log_message("请先选择一个回复模式！")
+            self.log_message("请先选择一个回复模式！", LogLevel.WARNING)
             return
         
         modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
@@ -832,7 +869,7 @@ class TiebaGPTApp:
         if is_custom:
             self.custom_input = self.custom_view_input.value.strip()
             if not self.custom_input:
-                self.log_message("使用此自定义模型时，自定义内容不能为空！")
+                self.log_message("使用此自定义模型时，自定义内容不能为空！", LogLevel.WARNING)
                 return
         else:
             self.custom_input = None
@@ -865,17 +902,17 @@ class TiebaGPTApp:
         current_tid = self.selected_thread.tid
         cached_analysis = self.analysis_cache.get(current_tid)
         if not cached_analysis or "summary" not in cached_analysis:
-            self.log_message("错误：未找到分析摘要，无法优化。")
+            self.log_message("错误：未找到分析摘要，无法优化。", LogLevel.ERROR)
             return
 
         reply_draft = self.reply_draft_input.value.strip()
         if not reply_draft:
-            self.log_message("错误：回复草稿不能为空。")
+            self.log_message("错误：回复草稿不能为空。", LogLevel.ERROR)
             return
 
         self.current_mode_id = self.mode_selector.value
         if not self.current_mode_id:
-            self.log_message("请先选择一个回复/优化模式！")
+            self.log_message("请先选择一个回复/优化模式！", LogLevel.WARNING)
             return
 
         self.generate_reply_ring.visible = True
@@ -899,6 +936,9 @@ class TiebaGPTApp:
         self.page.update()
 
     async def search_tieba(self, e):
+        if not self.tieba_name_input.value.strip():
+            self.log_message("贴吧名称不能为空，请先输入。", level=LogLevel.WARNING)
+            return
         self.current_page_num = 1; query = self.search_query_input.value.strip(); self.current_search_query = query if query else None
         await self._fetch_and_display_threads(); self.view_container.controls = [self.build_thread_list_view()]; self.page.update()
 
@@ -908,14 +948,14 @@ class TiebaGPTApp:
     
     async def _fetch_and_display_threads(self):
         tieba_name = self.tieba_name_input.value.strip()
-        if not tieba_name: self.log_message("错误：贴吧名称不能为空。"); return
-        if not self.gemini_client: self.log_message("Gemini客户端未初始化，请先在设置中配置有效的API Key。"); return
+        if not tieba_name: self.log_message("错误：贴吧名称不能为空。", LogLevel.ERROR); return
+        if not self.gemini_client: self.log_message("Gemini客户端未初始化，请先在设置中配置有效的API Key。", LogLevel.ERROR); return
         self.progress_ring.visible = True; self.search_button.disabled = True; self.prev_page_button.disabled = True; self.next_page_button.disabled = True; self.page.update()
         async with tb.Client() as tieba_client:
             if self.current_search_query: self.threads = await core.search_threads_by_page(tieba_client, tieba_name, self.current_search_query, self.current_page_num, self.log_message)
             else:
                 try: sort_type = ThreadSortType(int(self.sort_type_dropdown.value))
-                except (ValueError, TypeError): self.log_message(f"警告：无效的排序值。将使用默认排序。"); sort_type = ThreadSortType.REPLY
+                except (ValueError, TypeError): self.log_message(f"警告：无效的排序值。将使用默认排序。", LogLevel.WARNING); sort_type = ThreadSortType.REPLY
                 self.threads = await core.fetch_threads_by_page(tieba_client, tieba_name, self.current_page_num, sort_type, self.log_message)
         self._update_thread_list_view(); self.progress_ring.visible = False; self.search_button.disabled = False
         self.page_num_display.value = f"第 {self.current_page_num} 页"
@@ -990,7 +1030,11 @@ class TiebaGPTApp:
         if not self.status_log.controls:
             self._show_snackbar("日志为空，无需复制。", "tertiary")
             return
-        log_texts = [control.value for control in self.status_log.controls if hasattr(control, 'value')]
+        log_texts = [
+            row.controls[1].value 
+            for row in self.status_log.controls 
+            if isinstance(row, ft.Row) and len(row.controls) > 1 and hasattr(row.controls[1], 'value')
+        ]
         full_log = "\n".join(log_texts)
         self.page.set_clipboard(full_log)
         self._show_snackbar("所有日志已成功复制到剪贴板！", "primary")
@@ -1050,7 +1094,7 @@ class TiebaGPTApp:
             self.page.set_clipboard(json_string)
             self._show_snackbar(f"模式 '{mode_config.get('name')}' 已复制到剪贴板！", color_role="primary")
         except Exception as ex:
-            self.log_message(f"序列化模式 '{mode_config.get('name')}' 失败: {ex}")
+            self.log_message(f"序列化模式 '{mode_config.get('name')}' 失败: {ex}", LogLevel.ERROR)
             self._show_snackbar("复制失败，请检查日志。", color_role="error")
             
         self.page.update()
@@ -1142,7 +1186,7 @@ class TiebaGPTApp:
             except ValueError as ve:
                 dialog_textfield.error_text = str(ve); import_dialog.update()
             except Exception as ex:
-                self.log_message(f"导入模式时发生未知错误: {ex}")
+                self.log_message(f"导入模式时发生未知错误: {ex}", LogLevel.ERROR)
                 self.page.close(import_dialog)
                 self._show_snackbar("发生未知错误，请检查日志。", color_role="error")
 
@@ -1376,7 +1420,7 @@ class TiebaGPTApp:
             self.page.update()
             
             success, msg = core.merge_default_prompts(prefer_user)
-            self.log_message(msg)
+            self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
             
             self.progress_ring.visible = False
             if success:
@@ -1395,7 +1439,7 @@ class TiebaGPTApp:
             self.progress_ring.visible = True
             self.page.update()
             success, msg = core.restore_default_prompts()
-            self.log_message(msg)
+            self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
             
             self.progress_ring.visible = False
             if success:
