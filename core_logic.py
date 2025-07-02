@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.4.4"
+VERSION = "1.4.5"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -264,37 +264,45 @@ def format_contents(contents: tb_typing.contents) -> str:
         elif type_name in ['FragVoice_p', 'FragVoice_c']: parts.append("[语音]")
     return " ".join(parts).strip()
 
+def _format_user_info(user, lz_user_name: str = "") -> str:
+    if not user:
+        return "(用户: 未知用户)"
+
+    parts = []
+    user_name = getattr(user, 'user_name', '未知用户')
+    parts.append(f"用户: {user_name}")
+
+    nick_name = getattr(user, 'nick_name', '无昵称')
+    parts.append(f"昵称: {nick_name}")
+
+    if lz_user_name and user_name == lz_user_name: # 没有检查是否是未知用户，api保证user_name唯一性
+        parts.append("楼主")
+
+    if getattr(user, 'is_bawu', False):
+        parts.append("吧务")
+    
+    level = getattr(user, 'level', None)
+    if level is not None and level > 0:
+        parts.append(f"Lv.{level}")
+
+    ip_addr = getattr(user, 'ip', None)
+    if ip_addr:
+        parts.append(f"IP:{ip_addr}")
+    
+    return f"({', '.join(parts)})"
+
+def format_main_post_text(thread: tb_typing.Thread) -> str:
+    if not thread:
+        return ""
+    lz_user_name = getattr(thread.user, 'user_name', '未知用户')
+    lz_info_str = _format_user_info(thread.user, lz_user_name)
+    content_text = format_contents(thread.contents)
+    return f"[帖子标题]: {thread.title}\n[主楼] {lz_info_str}\n{content_text}"
+
 def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post], all_comments: dict[int, list[tb_typing.Comment]]) -> str:
     formatted_list = []
 
-    lz_user_name = ""
-    if thread and thread.user and hasattr(thread.user, 'user_name'):
-        lz_user_name = thread.user.user_name
-
-    def format_user_info(user) -> str:
-        if not user:
-            return "(用户: 未知用户)"
-
-        parts = []
-        user_name = getattr(user, 'user_name', '未知用户')
-        parts.append(f"用户: {user_name}")
-
-        if lz_user_name and user_name == lz_user_name:
-            parts.append("楼主")
-
-        if getattr(user, 'is_bawu', False):
-            parts.append("吧务")
-        
-        level = getattr(user, 'level', None)
-        if level is not None and level > 0:
-            parts.append(f"Lv.{level}")
-
-        ip_addr = getattr(user, 'ip', None)
-        if ip_addr:
-            parts.append(f"IP:{ip_addr}")
-        
-        return f"({', '.join(parts)})"
-
+    lz_user_name = getattr(thread.user, 'user_name', '未知用户')
     if posts:
         formatted_list.append("---")
         formatted_list.append("[讨论区]")
@@ -307,7 +315,7 @@ def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post]
         if not post_text:
             continue
             
-        user_info_str = format_user_info(post.user)
+        user_info_str = _format_user_info(post.user, lz_user_name)
         formatted_list.append(f"\n[回复 {post.floor}楼] {user_info_str}")
         formatted_list.append(post_text)
         
@@ -316,7 +324,7 @@ def format_discussion_text(thread: tb_typing.Thread, posts: list[tb_typing.Post]
                 comment_text = format_contents(comment.contents).strip()
                 if not comment_text:
                     continue
-                comment_user_info_str = format_user_info(comment.user)
+                comment_user_info_str = _format_user_info(comment.user, lz_user_name)
                 formatted_list.append(f"  [楼中楼 to {post.floor}楼, #{j+1}] {comment_user_info_str}")
                 formatted_list.append(f"  > {comment_text}")
                 
@@ -361,7 +369,7 @@ async def analyze_stance_by_page(tieba_client: tb.Client, gemini_client: genai.C
     if not thread_obj:
         return {"error": "无法获取帖子主楼信息，分析中止。"}
     
-    main_post_text = f"[帖子标题]: {thread_obj.title}\n[主楼内容]\n{format_contents(thread_obj.contents)}"
+    main_post_text = format_main_post_text(thread_obj)
 
     total_chunks = (total_pages + pages_per_call - 1) // pages_per_call
     current_chunk = 0

@@ -305,13 +305,14 @@ class TiebaGPTApp:
         return ft.Column(controls=[ft.Row([ft.Text("状态日志:", style=ft.TextThemeStyle.TITLE_MEDIUM),self.copy_log_button,],alignment=ft.MainAxisAlignment.SPACE_BETWEEN,vertical_alignment=ft.CrossAxisAlignment.CENTER),log_container],expand=expand)
 
     def _create_post_widget_by_user(self, user, content_str: str, floor_text: str, lz_user_name: str, is_comment: bool = False) -> ft.Control:
-        user_name = getattr(user, 'user_name', False)
+        user_name = getattr(user, 'user_name', '未知用户')
+        nick_name = getattr(user, 'nick_name', '无昵称')
         is_lz = user_name == lz_user_name
         is_bawu = getattr(user, 'is_bawu', False)
         user_level = getattr(user, 'level', None)
         ip = getattr(user, 'ip', None)
 
-        user_info_row = ft.Row(controls=[ft.Icon(ft.Icons.ACCOUNT_CIRCLE, color="primary", size=20), ft.Text(user_name, weight=ft.FontWeight.BOLD, color="primary")], alignment=ft.MainAxisAlignment.START, spacing=5)
+        user_info_row = ft.Row(controls=[ft.Icon(ft.Icons.ACCOUNT_CIRCLE, color="primary", size=20), ft.Text(f"{nick_name}({user_name})", weight=ft.FontWeight.BOLD, color="primary")], alignment=ft.MainAxisAlignment.START, spacing=5)
         if is_lz: 
             user_info_row.controls.append(self.create_tag("楼主", "primary"))
         if is_bawu:
@@ -712,7 +713,7 @@ class TiebaGPTApp:
         
         posts_list = posts_obj.objs
         self._build_rich_preview(self.selected_thread, posts_list, all_comments)
-        main_post_text = f"[帖子标题]: {self.selected_thread.title}\n[主楼内容]\n{core.format_contents(self.selected_thread.contents)}"
+        main_post_text = core.format_main_post_text(self.selected_thread)
         discussion_part_text = core.format_discussion_text(self.selected_thread, posts_list, all_comments)
         self.discussion_text = f"{main_post_text}\n{discussion_part_text}"
     
@@ -730,17 +731,12 @@ class TiebaGPTApp:
         if self.current_post_page < self.total_post_pages: self.current_post_page += 1; await self._load_and_display_post_page()
 
     def _build_rich_preview(self, thread: tb_typing.Thread, posts: list[tb_typing.Post], all_comments: dict[int, list[tb_typing.Comment]]):
-        lz_user_name = thread.user.user_name if thread.user and hasattr(thread.user, 'user_name') else ''
+        lz_user_name = getattr(thread.user, 'user_name', '未知用户')
         self.preview_display.controls.clear()
-        if self.current_post_page == 1:
-            main_post_content = core.format_contents(thread.contents).strip() or thread.title.strip()
-            if main_post_content: 
-                self.preview_display.controls.append(self._create_post_widget_by_user(thread.user, main_post_content, "主楼", lz_user_name))
         for post in posts:
-            if post.floor == 1: continue
-            post_content = core.format_contents(post.contents).strip()
-            if not post_content: continue
-            self.preview_display.controls.append(self._create_post_widget_by_user(post.user, post_content, f"{post.floor}楼", lz_user_name))
+            post_content = core.format_contents(post.contents).strip() or "(无正文)"
+            post_floor = post.floor
+            self.preview_display.controls.append(self._create_post_widget_by_user(post.user, post_content, "主楼" if post_floor == 1 else f"{post_floor}楼", lz_user_name))
             if post.pid in all_comments:
                 comment_container = ft.Column(spacing=5)
                 for comment in all_comments[post.pid]:
