@@ -188,8 +188,8 @@ class TiebaGPTApp:
             ft.Divider(height=10),
             self.reply_modes_list,
             ft.Divider(height=20),
-            ft.Text("回复模式生成器 Prompt", style=ft.TextThemeStyle.TITLE_SMALL),
-            ft.Text("警告：修改此处将改变‘AI生成Role和Task’按钮的行为。", color="error", size=11),
+            ft.Text("回复模式生成与优化器 Prompt", style=ft.TextThemeStyle.TITLE_SMALL),
+            ft.Text("警告：修改此处将改变模式编辑‘AI生成’和‘AI优化’按钮的行为。", color="error", size=11),
         ]
         
         if 'mode_generator' in core.PROMPTS and 'system_prompt' in core.PROMPTS['mode_generator']:
@@ -197,6 +197,13 @@ class TiebaGPTApp:
                 self._create_prompt_editor(
                     ('mode_generator', 'system_prompt'), 
                     core.PROMPTS['mode_generator']['system_prompt']
+                )
+            )
+        if 'mode_optimizer' in core.PROMPTS and 'system_prompt' in core.PROMPTS['mode_optimizer']:
+            mode_editor_content_controls.append(
+                self._create_prompt_editor(
+                    ('mode_optimizer', 'system_prompt'), 
+                    core.PROMPTS['mode_optimizer']['system_prompt']
                 )
             )
 
@@ -1089,24 +1096,32 @@ class TiebaGPTApp:
                 dialog_ai_error_text.visible = False
                 mode_editor_dialog.update()
 
+        def update_buttons_state(ev):
+            can_optimize = bool(dialog_role_input.value and dialog_task_input.value)
+            ai_optimize_button.disabled = not can_optimize
+            dialog_is_custom_switch.value = "{user_custom_input}" in dialog_task_input.value
+            mode_editor_dialog.update()
+
         dialog_mode_name_input = ft.TextField(label="模式名称 (唯一)",on_change=clear_name_error_on_change)
         dialog_mode_icon_input = ft.TextField(label="图标 (可选)")
         dialog_mode_desc_input = ft.TextField(label="模式描述",on_change=clear_ai_error_on_change)
         dialog_is_custom_switch = ft.Switch(label="需要自定义输入 (自动检测)", disabled=True)
 
-        def update_is_custom_switch(e):
-            dialog_is_custom_switch.value = "{user_custom_input}" in dialog_task_input.value
-            self.page.update()
-
-        dialog_role_input = ft.TextField(label="角色 (Role)", multiline=True, min_lines=3, max_lines=5)
-        dialog_task_input = ft.TextField(label="任务 (Task)", multiline=True, min_lines=5, max_lines=10, hint_text="若此模式需要用户输入，请使用 {user_custom_input} 作为占位符。", on_change=update_is_custom_switch)
+        dialog_role_input = ft.TextField(label="角色 (Role)", multiline=True, min_lines=3, max_lines=5, on_change=update_buttons_state)
+        dialog_task_input = ft.TextField(label="任务 (Task)", multiline=True, min_lines=5, max_lines=10, hint_text="若此模式需要用户输入，请使用 {user_custom_input} 作为占位符。", on_change=update_buttons_state)
         dialog_ai_progress = ft.ProgressRing(visible=False, width=16, height=16)
         
         ai_generate_button = ft.ElevatedButton(
-            "AI生成Role和Task",
+            "AI生成",
             icon=ft.Icons.AUTO_AWESOME,
             tooltip="根据模式名称和描述，让AI自动填写下方内容",
-            on_click=None # Will be assigned later
+            on_click=None 
+        )
+        ai_optimize_button = ft.ElevatedButton(
+            "AI优化",
+            icon=ft.Icons.AUTO_FIX_HIGH,
+            tooltip="让AI优化和改进下方已填写的Role和Task",
+            on_click=None
         )
 
         if not is_new_mode:
@@ -1119,48 +1134,74 @@ class TiebaGPTApp:
             dialog_role_input.value = config.get("role", "")
             dialog_task_input.value = config.get("task", "")
 
-        async def ai_generate_prompts(ev):
+        async def _handle_ai_mode_action(action_name: str, core_logic_callable, args: tuple):
             dialog_ai_result_text.visible = False
-            mode_name = dialog_mode_name_input.value.strip()
-            mode_desc = dialog_mode_desc_input.value.strip()
-            if not mode_name or not mode_desc:
-                dialog_ai_error_text.visible = True
-                mode_editor_dialog.update()
-                return
 
             ai_generate_button.disabled = True
+            ai_optimize_button.disabled = True
             dialog_ai_progress.visible = True
             mode_editor_dialog.update()
 
-            success, result = await core.generate_mode_prompts(
+            success, result = await core_logic_callable(
                 self.gemini_client,
                 self.settings["generator_model"],
-                mode_name,
-                mode_desc,
+                *args,
                 self.log_message
             )
-            
             if success:
                 dialog_role_input.value = result.get("role", "")
                 dialog_task_input.value = result.get("task", "")
-                dialog_ai_result_text.value = "✓ 生成成功!"
+                dialog_ai_result_text.value = f"✓ {action_name}成功!"
                 dialog_ai_result_text.color = "tertiary"
-                dialog_ai_result_text.visible = True
-                update_is_custom_switch(None)
             else:
-                dialog_ai_result_text.value = f"✗ 生成失败: {result}"
+                dialog_ai_result_text.value = f"✗ {action_name}失败: {result}"
                 dialog_ai_result_text.color = "error"
-                dialog_ai_result_text.visible = True
+            
+            dialog_ai_result_text.visible = True
 
             ai_generate_button.disabled = False
             dialog_ai_progress.visible = False
+            update_buttons_state(None)
             mode_editor_dialog.update()
 
             await asyncio.sleep(2)
             dialog_ai_result_text.visible = False
             mode_editor_dialog.update()
 
-        ai_generate_button.on_click = ai_generate_prompts
+        async def ai_generate_prompts_click(ev):
+            mode_name = dialog_mode_name_input.value.strip()
+            mode_desc = dialog_mode_desc_input.value.strip()
+            if not mode_name or not mode_desc:
+                dialog_ai_error_text.value = "生成需要填写名称和描述"
+                dialog_ai_error_text.visible = True
+                mode_editor_dialog.update()
+                return
+            
+            await _handle_ai_mode_action(
+                action_name="生成",
+                core_logic_callable=core.generate_mode_prompts,
+                args=(mode_name, mode_desc)
+            )
+
+        async def ai_optimize_prompts_click(ev):
+            mode_name = dialog_mode_name_input.value.strip()
+            mode_desc = dialog_mode_desc_input.value.strip()
+            existing_role = dialog_role_input.value.strip()
+            existing_task = dialog_task_input.value.strip()
+            if not all([mode_name, mode_desc, existing_role, existing_task]):
+                dialog_ai_error_text.value = "优化需要所有字段都有内容"
+                dialog_ai_error_text.visible = True
+                mode_editor_dialog.update()
+                return
+
+            await _handle_ai_mode_action(
+                action_name="优化",
+                core_logic_callable=core.optimize_mode_prompts,
+                args=(mode_name, mode_desc, existing_role, existing_task)
+            )
+
+        ai_generate_button.on_click = ai_generate_prompts_click
+        ai_optimize_button.on_click = ai_optimize_prompts_click
 
         def save_mode(ev):
             mode_name = dialog_mode_name_input.value.strip()
@@ -1197,7 +1238,7 @@ class TiebaGPTApp:
                     dialog_mode_name_input,
                     dialog_mode_icon_input,
                     dialog_mode_desc_input,
-                    ft.Row([ai_generate_button, dialog_ai_progress, dialog_ai_error_text,dialog_ai_result_text], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Row([ai_generate_button, ai_optimize_button, dialog_ai_progress, dialog_ai_error_text,dialog_ai_result_text], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     ft.Divider(),
                     dialog_is_custom_switch,
                     dialog_role_input,

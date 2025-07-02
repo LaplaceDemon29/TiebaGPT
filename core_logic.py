@@ -11,7 +11,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.4.5"
+VERSION = "1.4.6"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
@@ -172,29 +172,41 @@ def build_reply_generator_prompt(discussion_text: str, analysis_summary: str, mo
 """.strip()
 
 def build_mode_generator_prompt(mode_name: str, mode_description: str) -> str:
-    return PROMPTS['mode_generator']['system_prompt'].format(mode_name=mode_name, mode_description=mode_description)
+    prompt_template = PROMPTS.get('mode_generator', {}).get('system_prompt')
+    if not prompt_template:
+        raise ValueError("未找到 'mode_generator' 的 prompt 模板配置。")
+    return prompt_template.format(
+        mode_name=mode_name,
+        mode_description=mode_description
+    )
 
-async def generate_mode_prompts(
-    client: genai.Client, model_name: str, mode_name: str, mode_description: str, log_callback: typing.Callable
+def build_mode_optimizer_prompt(mode_name: str, mode_description: str, existing_role: str, existing_task: str) -> str:
+    prompt_template = PROMPTS.get('mode_optimizer', {}).get('system_prompt')
+    if not prompt_template:
+        raise ValueError("未找到 'mode_optimizer' 的 prompt 模板配置。")
+    return prompt_template.format(
+        mode_name=mode_name,
+        mode_description=mode_description,
+        existing_role=existing_role,
+        existing_task=existing_task
+    )
+
+async def _call_gemini_for_json_mode(
+    client: genai.Client, model_name: str, prompt: str, log_callback: typing.Callable
 ) -> typing.Tuple[bool, typing.Union[dict, str]]:
-    log_callback(f"正在请求AI为模式“{mode_name}”生成Role和Task...")
-    if not mode_name or not mode_description:
-        return False, "模式名称和描述不能为空。"
-
-    prompt = build_mode_generator_prompt(mode_name, mode_description)
     generation_config = {"response_mime_type": "application/json"}
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
-    
     try:
         response = await asyncio.to_thread(
             client.models.generate_content, model=model_name, contents=contents, config=generation_config
         )
         if response.text:
-            log_callback("AI生成成功！")
             result = json.loads(response.text)
             if "role" in result and "task" in result:
+                log_callback("AI 操作成功！")
                 return True, result
             else:
+                log_callback("AI返回的JSON格式不正确，缺少'role'或'task'字段。")
                 return False, "AI返回的JSON格式不正确，缺少'role'或'task'字段。"
         else:
             feedback_info = "未知原因"
@@ -206,8 +218,32 @@ async def generate_mode_prompts(
         log_callback("AI返回的内容不是有效的JSON格式。")
         return False, "AI返回的内容不是有效的JSON格式。"
     except Exception as e:
-        log_callback(f"调用Gemini生成模式时出错: {e}")
+        log_callback(f"调用Gemini时出错: {e}")
         return False, f"调用API时出错: {e}"
+
+async def generate_mode_prompts(
+    client: genai.Client, model_name: str, mode_name: str, mode_description: str, log_callback: typing.Callable
+) -> typing.Tuple[bool, typing.Union[dict, str]]:
+    log_callback(f"正在请求AI为模式“{mode_name}”生成Role和Task...")
+    if not mode_name or not mode_description:
+        return False, "模式名称和描述不能为空。"
+    try:
+        prompt = build_mode_generator_prompt(mode_name, mode_description)
+    except ValueError as e:
+        return False, str(e)
+    return await _call_gemini_for_json_mode(client, model_name, prompt, log_callback)
+
+async def optimize_mode_prompts(
+    client: genai.Client, model_name: str,mode_name: str, mode_description: str,existing_role: str, existing_task: str,log_callback: typing.Callable
+) -> typing.Tuple[bool, typing.Union[dict, str]]:
+    log_callback(f"正在请求AI优化模式“{mode_name}”的Role和Task...")
+    if not all([mode_name, mode_description, existing_role, existing_task]):
+        return False, "所有输入字段（名称、描述、Role、Task）都不能为空。"
+    try:
+        prompt = build_mode_optimizer_prompt(mode_name, mode_description, existing_role, existing_task)
+    except ValueError as e:
+        return False, str(e)
+    return await _call_gemini_for_json_mode(client, model_name, prompt, log_callback)
 
 async def fetch_gemini_models(api_key: str) -> typing.Tuple[bool, typing.Union[list[str], str]]:
     if not api_key: return False, "API Key 不能为空。"

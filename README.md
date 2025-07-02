@@ -2,8 +2,9 @@
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![Flet](https://img.shields.io/badge/UI-Flet-green.svg)](https://flet.dev/)
+[![Material Design 3](https://img.shields.io/badge/Design-Material%203-blueviolet)](https://m3.material.io/)
 [![Google Gemini](https://img.shields.io/badge/AI-Google%20Gemini-purple.svg)](https://ai.google.dev/)
-[![aiotieba](https://img.shields.io/badge/API-aiotieba-orange.svg)](https://github.com/Starry-OvO/aiotieba)
+[![aiotieba](https://img.shields.io/badge/API-aiotieba-orange.svg)](https://github.com/lumina37/aiotieba)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 **贴吧智能回复助手**是一款桌面应用，它利用 Google Gemini AI 模型，帮助用户智能地分析百度贴吧的帖子，并根据用户的需求生成各种风格的回复。无论您是想理性讨论、激情对线，还是想成为故事接龙大师，本工具都能为您提供强大的支持。
@@ -15,7 +16,7 @@
     *   **分块处理**: 自动将长篇帖子（多页回复）分块，逐一发送给AI进行分析，突破上下文长度限制。
     *   **摘要整合**: 将各分块的分析摘要再次整合，生成一份全面、连贯、高质量的全局讨论摘要。
 *   **多模式AI回复生成**:
-    *   内置多种预设回复模式，如“支持模型”、“抬杠模型”、“学术考据党”、“故事接龙大师”等。
+    *   内置多种预设回复模式，如“支持模型”、“抬杠模型”、“学术考据”、“故事接龙”等。
     *   支持需要用户提供自定义观点的“自定义模型”。
 *   **高度可定制的Prompt系统**:
     *   **回复模式编辑器**: 用户可以在图形化界面中**添加、删除、编辑**任何回复模式，包括其名称、描述、AI扮演的`角色(Role)`和要执行的`任务(Task)`。
@@ -118,7 +119,7 @@ python gui.py
 *   **编辑基础Prompt**: 您可以直接修改分析器、摘要器和通用回复规则的系统级Prompt。
 *   **管理回复模式**:
     *   **添加**: 点击“添加新模式”。
-    *   **AI辅助**: 在弹出的对话框中，填写“模式名称”和“描述”，然后点击“**AI生成Role和Task**”按钮，AI会自动填充下方的输入框。
+    *   **AI辅助**: 在弹出的对话框中，填写“模式名称”和“描述”，然后点击“**AI生成**”按钮，AI会自动填充下方的输入框。点击“**AI生成**”按钮，AI会自动优化。
     *   **编辑/删除**: 在模式列表中，点击对应条目右侧的编辑或删除图标。
     *   **保存**: 在对话框中点击“保存”后，您的更改会**立即写入**配置文件，无需再点击全局的“保存 Prompts”按钮。
 
