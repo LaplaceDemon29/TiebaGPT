@@ -453,7 +453,8 @@ class TiebaGPTApp:
         content_container.content = ft.Row([self.about_progress_ring], alignment=ft.MainAxisAlignment.CENTER)
         self.about_progress_ring.visible = True
         self.page.update()
-        readme_text = await core.get_readme_content(self.log_message)
+        success, readme_text = await core.get_readme_content()
+        if not success: self.log_message(readme_text, LogLevel.ERROR)
         self.readme_display.value = readme_text
         self.about_progress_ring.visible = False
         content_container.content = self.readme_display

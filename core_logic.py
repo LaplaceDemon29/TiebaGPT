@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import json
 import sys
 import typing
@@ -557,31 +558,33 @@ def get_sorted_reply_modes() -> list[tuple[str, dict]]:
 
     return sorted(modes.items(), key=sort_key)
 
-async def get_readme_content(log_callback: typing.Callable) -> str:
+def _process_readme_for_flet(content: str) -> str:
+
+    badge_pattern = re.compile(r"\[!\[([^\]]+)\]\([^)]+\)\]\(([^)]+)\)")
+    
+    replacement_format = r"- **\1:** [view](\2)"
+    
+    processed_content = badge_pattern.sub(replacement_format, content)
+    
+    return processed_content
+
+async def get_readme_content() -> typing.Tuple[bool, str]:
 
     try:
         if os.path.exists(README_FILE):
-            log_callback(f"正在从本地加载 {README_FILE}...")
             with open(README_FILE, 'r', encoding='utf-8') as f:
-                return f.read()
+                content = f.read()
         else:
-            log_callback(f"本地未找到 {README_FILE}，正在从 GitHub 下载...")
             async with httpx.AsyncClient() as client:
                 response = await client.get(README_URL, follow_redirects=True)
                 response.raise_for_status()
-                
                 content = response.text
-                
-                log_callback("下载成功，正在保存到本地...")
                 with open(README_FILE, 'w', encoding='utf-8') as f:
                     f.write(content)
-                
-                return content
+        return True, _process_readme_for_flet(content)
     except httpx.RequestError as e:
         error_msg = f"网络请求错误: 无法下载 README.md。请检查您的网络连接。\n\n错误详情: {e}"
-        log_callback(error_msg, level="ERROR")
-        return f"# 下载失败\n\n{error_msg}"
+        return False, f"# 下载失败\n\n{error_msg}"
     except Exception as e:
         error_msg = f"处理 README.md 时发生未知错误。\n\n错误详情: {e}"
-        log_callback(error_msg, level="ERROR")
-        return f"# 加载失败\n\n{error_msg}"
+        return False, f"# 加载失败\n\n{error_msg}"
