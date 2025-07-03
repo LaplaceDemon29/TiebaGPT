@@ -310,6 +310,12 @@ class TiebaGPTApp:
                 cr_prompts = rg_prompts.get('common_rules', {})
                 controls_list.append(self._create_prompt_editor(('reply_generator', 'common_rules', 'rules'), cr_prompts.get('rules', [])))
 
+        if 'reply_optimizer' in prompts:
+            ro_prompts = prompts['reply_optimizer']
+            controls_list.append(ft.Divider(height=10))
+            controls_list.append(ft.Text("回复优化器通用规则", style=ft.TextThemeStyle.TITLE_MEDIUM))
+            controls_list.append(self._create_prompt_editor(('reply_optimizer', 'system_prompt'), ro_prompts.get('system_prompt', [])))
+
         return ft.Column(controls_list, spacing=15)
     
     def _build_reply_modes_editor_list(self):
@@ -848,104 +854,90 @@ class TiebaGPTApp:
         
         self.page.update()
 
-
-    async def generate_reply_click(self, e):
+    async def _execute_ai_reply_action(self, core_function, action_name: str, **kwargs):
         current_tid = self.selected_thread.tid
         cached_analysis = self.analysis_cache.get(current_tid)
         if not cached_analysis or "summary" not in cached_analysis:
-            self.log_message("错误：未找到当前帖子的分析摘要，无法生成回复。", LogLevel.ERROR)
+            self.log_message(f"错误：未找到当前帖子的分析摘要，无法{action_name}回复。", LogLevel.ERROR)
             return
-        
+
         analysis_summary = cached_analysis["summary"]
         self.current_mode_id = self.mode_selector.value
         if not self.current_mode_id:
             self.log_message("请先选择一个回复模式！", LogLevel.WARNING)
             return
-        
+            
         modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
         selected_mode_config = modes.get(self.current_mode_id, {})
         is_custom = selected_mode_config.get('is_custom', False)
+        custom_input = None
 
         if is_custom:
-            self.custom_input = self.custom_view_input.value.strip()
-            if not self.custom_input:
+            custom_input = self.custom_view_input.value.strip()
+            if not custom_input:
                 self.log_message("使用此自定义模型时，自定义内容不能为空！", LogLevel.WARNING)
                 return
-        else:
-            self.custom_input = None
-
-        self.generate_reply_ring.visible = True; self.generate_button.disabled = True; self.copy_button.disabled = True
-        self.reply_display.value = "⏳ 生成中，请稍候..."
-        self.page.update()
-    
-        generated_reply = await core.generate_reply(
-            self.gemini_client, self.discussion_text, analysis_summary, 
-            self.current_mode_id, self.settings["generator_model"], 
-            self.log_message, custom_input=self.custom_input
-        )
-    
-        self.reply_display.value = generated_reply
-        self.generate_reply_ring.visible = False; self.generate_button.disabled = False; self.copy_button.disabled = not bool(generated_reply)
-        self.page.update()
-
-    def _update_optimize_button_state(self):
-
-        has_draft = bool(self.reply_draft_input.value and self.reply_draft_input.value.strip())
-        self.optimize_button.disabled = not has_draft
-        if self.page:
-            self.page.update()
-
-    def on_draft_input_change(self, e):
-        self._update_optimize_button_state()
-
-    async def optimize_reply_click(self, e):
-        current_tid = self.selected_thread.tid
-        cached_analysis = self.analysis_cache.get(current_tid)
-        if not cached_analysis or "summary" not in cached_analysis:
-            self.log_message("错误：未找到分析摘要，无法优化。", LogLevel.ERROR)
-            return
-
-        reply_draft = self.reply_draft_input.value.strip()
-        if not reply_draft:
-            self.log_message("错误：回复草稿不能为空。", LogLevel.ERROR)
-            return
-
-        self.current_mode_id = self.mode_selector.value
-        if not self.current_mode_id:
-            self.log_message("请先选择一个回复/优化模式！", LogLevel.WARNING)
-            return
-
-        modes = core.PROMPTS.get('reply_generator', {}).get('modes', {})
-        selected_mode_config = modes.get(self.current_mode_id, {})
-        is_custom = selected_mode_config.get('is_custom', False)
-
-        if is_custom:
-            self.custom_input = self.custom_view_input.value.strip()
-            if not self.custom_input:
-                self.log_message("使用此自定义模型时，自定义内容不能为空！", LogLevel.WARNING)
-                return
-        else:
-            self.custom_input = None
 
         self.generate_reply_ring.visible = True
         self.generate_button.disabled = True
         self.optimize_button.disabled = True
         self.copy_button.disabled = True
-        self.reply_display.value = "⏳ 优化中，请稍候..."
+        self.reply_display.value = f"⏳ {action_name}中，请稍候..."
         self.page.update()
 
-        optimized_reply = await core.optimize_reply(
-            self.gemini_client, self.discussion_text, cached_analysis["summary"],
-            self.current_mode_id, self.settings["generator_model"],
-            self.log_message, reply_draft=reply_draft, custom_input=self.custom_input
+        generated_reply = await core_function(
+            self.gemini_client, self.discussion_text, analysis_summary, 
+            self.current_mode_id, self.settings["generator_model"], 
+            self.log_message, custom_input=custom_input, **kwargs
         )
 
-        self.reply_display.value = optimized_reply
+        self.reply_display.value = generated_reply
         self.generate_reply_ring.visible = False
         self.generate_button.disabled = False
         self._update_optimize_button_state()
-        self.copy_button.disabled = not bool(optimized_reply)
+        self.copy_button.disabled = not bool(generated_reply)
         self.page.update()
+
+
+    async def generate_reply_click(self, e):
+        await self._execute_ai_reply_action(
+            core_function=core.generate_reply,
+            action_name="生成"
+        )
+
+    async def optimize_reply_click(self, e):
+        reply_draft = self.reply_draft_input.value.strip()
+        
+        if not reply_draft and self.reply_display.value:
+            self.log_message("优化草稿为空，自动使用已有回复进行优化。")
+            reply_draft = self.reply_display.value.strip()
+            self.reply_draft_input.value = reply_draft
+            self.page.update()
+
+        if not reply_draft:
+            self.log_message("错误：没有可供优化的内容。", LogLevel.ERROR)
+            return
+
+        await self._execute_ai_reply_action(
+            core_function=core.optimize_reply,
+            action_name="优化",
+            reply_draft=reply_draft
+        )
+
+    def _update_optimize_button_state(self):
+
+        has_draft = bool(self.reply_draft_input.value and self.reply_draft_input.value.strip())
+        has_existing_reply = bool(self.reply_display.value and self.reply_display.value.strip())
+
+        if has_existing_reply and "⏳" in self.reply_display.value:
+            has_existing_reply = False
+
+        self.optimize_button.disabled = not (has_draft or has_existing_reply)
+        if self.page:
+            self.page.update()
+
+    def on_draft_input_change(self, e):
+        self._update_optimize_button_state()
 
     async def search_tieba(self, e):
         if not self.tieba_name_input.value.strip():
