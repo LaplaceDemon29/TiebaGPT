@@ -6,16 +6,19 @@ import typing
 import shutil
 import subprocess
 import aiotieba as tb
+import httpx
 from aiotieba import ThreadSortType
 from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 SETTINGS_FILE = "settings.json"
 PROMPTS_FILE = "prompts.json"
 DEFAULT_PROMPTS_FILE = "prompts.default.json"
 POSTS_PER_PAGE = 30
+README_FILE = "README.md"
+README_URL = "https://raw.githubusercontent.com/LaplaceDemon29/TiebaGPT/main/README.md"
 
 def get_app_version() -> str:
     base_version = VERSION
@@ -553,3 +556,32 @@ def get_sorted_reply_modes() -> list[tuple[str, dict]]:
         return (priority, name)
 
     return sorted(modes.items(), key=sort_key)
+
+async def get_readme_content(log_callback: typing.Callable) -> str:
+
+    try:
+        if os.path.exists(README_FILE):
+            log_callback(f"正在从本地加载 {README_FILE}...")
+            with open(README_FILE, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            log_callback(f"本地未找到 {README_FILE}，正在从 GitHub 下载...")
+            async with httpx.AsyncClient() as client:
+                response = await client.get(README_URL, follow_redirects=True)
+                response.raise_for_status()
+                
+                content = response.text
+                
+                log_callback("下载成功，正在保存到本地...")
+                with open(README_FILE, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                return content
+    except httpx.RequestError as e:
+        error_msg = f"网络请求错误: 无法下载 README.md。请检查您的网络连接。\n\n错误详情: {e}"
+        log_callback(error_msg, level="ERROR")
+        return f"# 下载失败\n\n{error_msg}"
+    except Exception as e:
+        error_msg = f"处理 README.md 时发生未知错误。\n\n错误详情: {e}"
+        log_callback(error_msg, level="ERROR")
+        return f"# 加载失败\n\n{error_msg}"
