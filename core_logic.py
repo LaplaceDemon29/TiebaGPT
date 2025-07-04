@@ -13,13 +13,18 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.5.3"
-SETTINGS_FILE = "settings.json"
-PROMPTS_FILE = "prompts.json"
-DEFAULT_PROMPTS_FILE = "prompts.default.json"
+VERSION = "1.5.4"
 POSTS_PER_PAGE = 30
+DEFAULT_PROMPTS_FILENAME = "prompts.default.json"
 README_FILE = "README.md"
-README_URL = "https://raw.githubusercontent.com/LaplaceDemon29/TiebaGPT/main/README.md"
+CODE_URL = "https://github.com/LaplaceDemon29/TiebaGPT"
+RAW_URL = "https://raw.githubusercontent.com/LaplaceDemon29/TiebaGPT/main/"
+APP_DATA_PATH = os.getenv("FLET_APP_STORAGE_DATA") or ""
+SETTINGS_FILE = os.path.join(APP_DATA_PATH, "settings.json")
+PROMPTS_FILE = os.path.join(APP_DATA_PATH, "prompts.json")
+DEFAULT_PROMPTS_FILE = os.path.join(APP_DATA_PATH, DEFAULT_PROMPTS_FILENAME)
+README_URL = RAW_URL + README_FILE
+DEFAULT_PROMPTS_URL = RAW_URL + DEFAULT_PROMPTS_FILENAME
 
 def get_app_version() -> str:
     base_version = VERSION
@@ -43,6 +48,28 @@ def load_settings() -> dict:
 def save_settings(settings_data: dict):
     with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(settings_data, f, indent=4)
+
+def ensure_default_prompts_exist_sync() -> tuple[bool, str]:
+    if os.path.exists(DEFAULT_PROMPTS_FILE):
+        return True, None
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(DEFAULT_PROMPTS_URL, follow_redirects=True)
+            response.raise_for_status()
+            content = response.text
+        
+        json.loads(content)
+        
+        with open(DEFAULT_PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return True, "成功从GitHub下载并保存了默认配置文件。"
+    except httpx.RequestError as e:
+        return False, f"网络错误: 无法下载默认配置文件。请检查您的网络连接。\n错误: {e}"
+    except json.JSONDecodeError:
+        return False, "下载的默认配置文件格式错误（不是有效的JSON）。"
+    except Exception as e:
+        return False, f"处理默认配置文件时发生未知错误。\n错误: {e}"
 
 PROMPTS = {}
 def load_prompts():

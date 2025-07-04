@@ -1,4 +1,7 @@
 **/__pycache__/
-assets/
+build/
+dist/
+storage/
 settings.json
 prompts.json
+gui.spec

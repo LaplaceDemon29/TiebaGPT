@@ -149,7 +149,7 @@ class TiebaGPTApp:
     # --- 视图构建方法 ---
     def build_main_view(self):
         input_row = ft.Row([self.tieba_name_input, self.search_query_input, self.sort_type_dropdown, self.search_button], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
-        app_info_row = ft.Row([ft.Text(f"v{self.app_version}", color="primary"), ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.GREY_400), ft.TextButton(text="GitHub", icon=ft.Icons.CODE, url="https://github.com/LaplaceDemon29/TiebaGPT", tooltip="查看项目源代码")], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
+        app_info_row = ft.Row([ft.Text(f"v{self.app_version}", color="primary"), ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.GREY_400), ft.TextButton(text="GitHub", icon=ft.Icons.CODE, url=core.CODE_URL, tooltip="查看项目源代码")], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
         
         return ft.Column([
             ft.Text("贴吧智能回复助手", style=ft.TextThemeStyle.HEADLINE_MEDIUM), 
@@ -407,7 +407,7 @@ class TiebaGPTApp:
                                 ft.TextButton(
                                     text="GitHub 项目地址",
                                     icon=ft.Icons.CODE,
-                                    url="https://github.com/LaplaceDemon29/TiebaGPT"
+                                    url=core.CODE_URL
                                 ),
                             ],
                             alignment=ft.MainAxisAlignment.START
@@ -520,19 +520,21 @@ class TiebaGPTApp:
         self.model_selection_row.controls.clear(); self.model_selection_row.controls.append(self.analyzer_model_dd); self.model_selection_row.controls.append(self.generator_model_dd)
 
     def initialize_app(self):
-        self.settings = core.load_settings(); self.log_message("设置已加载。")
+        success, msg = core.ensure_default_prompts_exist_sync()
+        self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
+        self.settings = core.load_settings()
         seed_color = self.settings.get("color_scheme_seed"); 
         if seed_color: self.page.theme = ft.Theme(color_scheme_seed=seed_color)
         success, msg = core.load_prompts(); self.log_message(msg, LogLevel.INFO if success else LogLevel.ERROR)
         if not success: self.search_button.disabled = True
         status, user_v, default_v = core.check_prompts_version()
         if status == "NEEDS_UPDATE":
-            self.log_message(f"配置需要更新 (用户版本: {user_v}, 最新版本: {default_v})。正在提示用户...")
-            self._show_prompt_update_dialog(user_v, default_v); self.log_message("配置更新流程结束。")
+            self.log_message(f"配置需要更新 (用户版本: {user_v}, 最新版本: {default_v})，提示用户操作。")
+            self._show_prompt_update_dialog(user_v, default_v)
         effective_key = self._try_get_effective_api_key()
         if effective_key:
             try:
-                self.gemini_client = genai.Client(api_key=effective_key); self.log_message("Gemini Client 初始化成功。")
+                self.gemini_client = genai.Client(api_key=effective_key)
                 self.search_button.disabled = False
             except Exception as e:
                 self.log_message(f"使用已配置的Key初始化失败: {e}，请前往设置更新。", LogLevel.ERROR); self.search_button.disabled = True
@@ -543,6 +545,7 @@ class TiebaGPTApp:
         self.page.update()
 
     def log_message(self, message: str, level: LogLevel = LogLevel.INFO):
+        if not message: return
         log_color = self.LOG_LEVEL_COLOR_MAP.get(level, "on_surface_variant"); log_icon = self.LOG_LEVEL_ICON_MAP.get(level, ft.Icons.INFO_OUTLINE)
         log_entry = ft.Row(controls=[ft.Icon(name=log_icon, color=log_color, size=14), ft.Text(f"[{level.name}] {message}", size=11, selectable=True, color=log_color, expand=True, no_wrap=False)], spacing=5, vertical_alignment=ft.CrossAxisAlignment.START)
         self.status_log.controls.append(log_entry)
@@ -572,18 +575,15 @@ class TiebaGPTApp:
         env_key = os.getenv("GEMINI_API_KEY", ""); saved_key = self.settings.get("api_key", "")
         self.api_key_input.disabled = False; self.save_api_key_switch.disabled = False
         if saved_key:
-            self.api_key_input.value = saved_key; self.api_key_input.hint_text = "已从配置文件加载"
-            self.save_api_key_switch.value = True; self.log_message("API Key 已从配置文件加载。")
+            self.api_key_input.value = saved_key; self.api_key_input.hint_text = "已从配置文件加载"; self.save_api_key_switch.value = True
         elif env_key:
-            self.api_key_input.value = env_key; self.api_key_input.hint_text = "已从环境变量加载 (若保存将写入配置文件)"
-            self.save_api_key_switch.value = False; self.log_message("API Key 已从环境变量加载。")
+            self.api_key_input.value = env_key; self.api_key_input.hint_text = "已从环境变量加载 (若保存将写入配置文件)"; self.save_api_key_switch.value = False
         else:
-            self.api_key_input.value = ""; self.api_key_input.hint_text = "请输入您的 API Key"
-            self.save_api_key_switch.value = False; self.log_message("请在输入框中配置 API Key。")
+            self.api_key_input.value = ""; self.api_key_input.hint_text = "请输入您的 API Key"; self.save_api_key_switch.value = False
         self.color_seed_input.value = self.settings.get("color_scheme_seed", "blue")
         self.pages_per_call_slider.value = self.settings.get("pages_per_api_call", 4)
         self._rebuild_model_dropdowns(self.settings.get("available_models"))
-        self.save_prompts_button.disabled = True; self.log_message("已打开设置页面。"); self.validate_settings(None); self.page.update()
+        self.save_prompts_button.disabled = True; self.validate_settings(None); self.page.update()
 
     def on_settings_tab_change(self, e):
         idx = self.settings_tabs.selected_index
@@ -655,7 +655,7 @@ class TiebaGPTApp:
         if self.save_api_key_switch.value:
             self.settings["api_key"] = self.api_key_input.value.strip(); self.log_message("API Key 已明文保存至配置文件。", LogLevel.WARNING)
         else:
-            self.settings["api_key"] = ""; self.log_message("API Key 未保存至配置文件。")
+            self.settings["api_key"] = ""
         self.settings["analyzer_model"] = self.analyzer_model_dd.value; self.settings["generator_model"] = self.generator_model_dd.value
         self.settings["pages_per_api_call"] = int(self.pages_per_call_slider.value)
         new_seed_color = self.color_seed_input.value.strip(); current_seed_color = self.settings.get("color_scheme_seed", "blue")
@@ -670,7 +670,7 @@ class TiebaGPTApp:
         current_effective_key = self._try_get_effective_api_key(from_ui=True)
         if current_effective_key:
             try:
-                self.gemini_client = genai.Client(api_key=current_effective_key); self.log_message("Gemini Client 已使用新设置重新初始化。")
+                self.gemini_client = genai.Client(api_key=current_effective_key)
                 self.search_button.disabled = False
             except Exception as ex:
                 self.gemini_client = None; self.log_message(f"提供的 Key 无效: {ex}", LogLevel.ERROR); self.search_button.disabled = True
@@ -888,7 +888,7 @@ class TiebaGPTApp:
         if 'modes' not in core.PROMPTS['reply_generator']: core.PROMPTS['reply_generator']['modes'] = {}
         core.PROMPTS['reply_generator']['modes'][mode_id] = config; core.save_prompts(core.PROMPTS)
         if hasattr(self, 'save_prompts_button'): self.save_prompts_button.disabled = True
-        self.log_message(f"回复模式 '{config.get('name')}' (ID: {mode_id}) 已更新并保存。")
+        self.log_message(f"回复模式 '{config.get('name')}' 已更新并保存。")
         self._show_snackbar(success_message, color_role="primary"); self._build_reply_modes_editor_list()
         if self.navigation_rail.selected_index == 1: self._populate_mode_dropdown()
         self.page.update()
