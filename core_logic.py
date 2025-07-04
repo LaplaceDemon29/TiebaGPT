@@ -5,7 +5,6 @@ import json
 import sys
 import typing
 import shutil
-import subprocess
 import aiotieba as tb
 import httpx
 from aiotieba import ThreadSortType
@@ -20,21 +19,13 @@ README_FILE = "README.md"
 CODE_URL = "https://github.com/LaplaceDemon29/TiebaGPT"
 RAW_URL = "https://raw.githubusercontent.com/LaplaceDemon29/TiebaGPT/main/"
 APP_DATA_PATH = os.getenv("FLET_APP_STORAGE_DATA") or ""
+PLATFORM = os.getenv("FLET_PLATFORM") or "windows"
 SETTINGS_FILE = os.path.join(APP_DATA_PATH, "settings.json")
 PROMPTS_FILE = os.path.join(APP_DATA_PATH, "prompts.json")
 DEFAULT_PROMPTS_FILE = os.path.join(APP_DATA_PATH, DEFAULT_PROMPTS_FILENAME)
 README_URL = RAW_URL + README_FILE
 DEFAULT_PROMPTS_URL = RAW_URL + DEFAULT_PROMPTS_FILENAME
 
-def get_app_version() -> str:
-    base_version = VERSION
-    try:
-        git_hash_bytes = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL)
-        git_hash = git_hash_bytes.decode('utf-8').strip()
-        return f"{base_version}.{git_hash}"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return base_version
-        
 def load_settings() -> dict:
     default_settings = {"api_key": "","analyzer_model": "gemini-1.5-flash-latest","generator_model": "gemini-1.5-flash-latest","available_models": [],"color_scheme_seed": "blue","pages_per_api_call": 4}
     try:
@@ -569,7 +560,7 @@ def generate_reply_stream(client: genai.Client, discussion_text: str, analysis_s
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
     
     try:
-        log_callback("正在调用 Gemini API 流式生成回复...")
+        log_callback("正在调用 Gemini API 生成回复...")
         response_stream = client.models.generate_content_stream(model=model_name, contents=contents, config=generation_config)
         for chunk in response_stream:
             if hasattr(chunk, 'text') and chunk.text:
@@ -593,7 +584,7 @@ def optimize_reply_stream(client: genai.Client, discussion_text: str, analysis_s
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
 
     try:
-        log_callback("正在调用 Gemini API 流式优化回复...")
+        log_callback("正在调用 Gemini API 优化回复...")
         response_stream = client.models.generate_content_stream(model=model_name, contents=contents, config=generation_config)
         for chunk in response_stream:
             if hasattr(chunk, 'text') and chunk.text:

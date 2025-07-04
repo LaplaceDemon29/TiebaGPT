@@ -37,7 +37,7 @@ class TiebaGPTApp:
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.window_width = 1200
         self.page.window_height = 800
-        self.app_version = core.get_app_version()
+        self.app_version = core.VERSION
 
         # --- 状态变量 ---
         self.settings = {}; self.gemini_client = None; self.threads = []; self.selected_thread = None
@@ -48,6 +48,7 @@ class TiebaGPTApp:
         self.current_search_query = None
         self.current_post_page = 1
         self.total_post_pages = 1
+        self.blinking_cursor_task = None
 
         # --- UI 控件 ---
         # -- 导航 --
@@ -264,7 +265,7 @@ class TiebaGPTApp:
             ft.Text("设置", style=ft.TextThemeStyle.HEADLINE_MEDIUM),
             self.settings_tabs,
             self.settings_content_area
-        ], expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
+        ], expand=True, horizontal_alignment=ft.CrossAxisAlignment.START, spacing=10)
 
     def _build_general_settings_tab(self):
         return ft.Column(
@@ -518,6 +519,19 @@ class TiebaGPTApp:
             else: new_generator_dd.value = next((m for m in models_list if "flash" in m), models_list[0])
         self.analyzer_model_dd = new_analyzer_dd; self.generator_model_dd = new_generator_dd
         self.model_selection_row.controls.clear(); self.model_selection_row.controls.append(self.analyzer_model_dd); self.model_selection_row.controls.append(self.generator_model_dd)
+
+    async def _blinking_cursor(self):
+        try:
+            while True:
+                self.reply_display.value = "▌"
+                if self.page: self.page.update()
+                await asyncio.sleep(0.5)
+                self.reply_display.value = ""
+                if self.page: self.page.update()
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            pass
+
 
     def initialize_app(self):
         success, msg = core.ensure_default_prompts_exist_sync()
@@ -775,6 +789,43 @@ class TiebaGPTApp:
         else: self.analysis_display.value = f"❌ 分析失败:\n\n{self.analysis_result.get('error', '未知错误')}"
         self.page.update()
 
+    def _stream_and_update_worker(self, core_function, core_args: dict):
+        generated_reply = ""
+        is_first_chunk = True
+        try:
+            generated_chunks = core_function(**core_args)
+            for chunk in generated_chunks:
+                if is_first_chunk:
+                    if self.blinking_cursor_task and not self.blinking_cursor_task.done():
+                        self.blinking_cursor_task.cancel()
+                    generated_reply = ""
+                    is_first_chunk = False
+
+                generated_reply += chunk
+                self.reply_display.value = generated_reply + " ▌"
+                self.page.update()
+
+            if is_first_chunk and self.blinking_cursor_task and not self.blinking_cursor_task.done():
+                self.blinking_cursor_task.cancel()
+
+            self.reply_display.value = generated_reply
+            self.page.update()
+
+        except Exception as e:
+            error_message = f"处理回复流时发生错误: {e}"
+            self.log_message(error_message, LogLevel.ERROR)
+            self.reply_display.value = error_message
+            if self.blinking_cursor_task and not self.blinking_cursor_task.done():
+                self.blinking_cursor_task.cancel()
+            self.page.update()
+        finally:
+            self.generate_reply_ring.visible = False
+            self.generate_button.disabled = False
+            self._update_optimize_button_state()
+            self.copy_button.disabled = not bool(generated_reply.strip())
+            if self.page:
+                self.page.update()
+
     async def _execute_ai_reply_action(self, core_function, action_name: str, **kwargs):
         cached_analysis = self.analysis_cache.get(self.selected_thread.tid)
         if not cached_analysis or "summary" not in cached_analysis:
@@ -787,20 +838,19 @@ class TiebaGPTApp:
             custom_input = self.custom_view_input.value.strip()
             if not custom_input: self.log_message("使用此自定义模型时，自定义内容不能为空！", LogLevel.WARNING); return
         self.generate_reply_ring.visible = True; self.generate_button.disabled = True; self.optimize_button.disabled = True
-        self.copy_button.disabled = True; self.reply_display.value = f"⏳ {action_name}中，请稍候..."; self.page.update()
-        await asyncio.sleep(0.01)
-        generated_reply = ""
-        try:
-            generated_chunks = await asyncio.to_thread(core_function, self.gemini_client, self.discussion_text, cached_analysis["summary"], self.current_mode_id, self.settings["generator_model"], self.log_message, custom_input=custom_input, **kwargs)
-            first_chunk = True
-            for chunk in generated_chunks:
-                if first_chunk: generated_reply = ""; first_chunk = False
-                generated_reply += chunk; self.reply_display.value = generated_reply + " ▌"; self.page.update(); await asyncio.sleep(0.001)
-        except Exception as e:
-            self.log_message(f"处理回复流时发生错误: {e}", LogLevel.ERROR); generated_reply = f"处理回复流时出错: {e}"
-
-        self.reply_display.value = generated_reply; self.generate_reply_ring.visible = False; self.generate_button.disabled = False
-        self._update_optimize_button_state(); self.copy_button.disabled = not bool(generated_reply.strip()); self.page.update()
+        self.copy_button.disabled = True; self.reply_display.value = ""
+        self.blinking_cursor_task = asyncio.create_task(self._blinking_cursor()); self.page.update()
+        core_args = {
+            "client": self.gemini_client,
+            "discussion_text": self.discussion_text,
+            "analysis_summary": cached_analysis["summary"],
+            "mode_id": self.current_mode_id,
+            "model_name": self.settings["generator_model"],
+            "log_callback": self.log_message,
+            "custom_input": custom_input,
+            **kwargs
+        }
+        await asyncio.to_thread(self._stream_and_update_worker, core_function, core_args)
 
     async def generate_reply_click(self, e): await self._execute_ai_reply_action(core.generate_reply_stream, "生成")
     async def optimize_reply_click(self, e):
