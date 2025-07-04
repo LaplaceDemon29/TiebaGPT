@@ -13,7 +13,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.5.4"
+VERSION = "1.5.5"
 POSTS_PER_PAGE = 30
 DEFAULT_PROMPTS_FILENAME = "prompts.default.json"
 README_FILE = "README.md"
@@ -555,6 +555,53 @@ async def optimize_reply(client: genai.Client, discussion_text: str, analysis_su
     except Exception as e:
         log_callback(f"Gemini API 回复优化失败: {e}")
         return f"优化回复失败: {e}"
+
+def generate_reply_stream(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, custom_input: typing.Optional[str] = None) -> typing.Generator[str, None, None]:
+    modes = PROMPTS.get('reply_generator', {}).get('modes', {})
+    mode_name = modes.get(mode_id, {}).get("name", "未知模式")
+    log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式生成回复 ---")
+    try:
+        prompt = build_reply_generator_prompt(discussion_text, analysis_summary, mode_id, custom_input)
+    except Exception as e:
+        return f"构建Prompt失败: {e}"
+
+    generation_config = {"response_mime_type": "text/plain"}
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+    
+    try:
+        log_callback("正在调用 Gemini API 流式生成回复...")
+        response_stream = client.models.generate_content_stream(model=model_name, contents=contents, config=generation_config)
+        for chunk in response_stream:
+            if hasattr(chunk, 'text') and chunk.text:
+                yield chunk.text
+        log_callback("Gemini API 回复生成成功。")
+    except Exception as e:
+        log_callback(f"Gemini API 回复生成失败: {e}")
+        yield f"生成回复失败: {e}"
+
+def optimize_reply_stream(client: genai.Client, discussion_text: str, analysis_summary: str, mode_id: str, model_name: str, log_callback: typing.Callable, reply_draft: str, custom_input: typing.Optional[str] = None) -> typing.Generator[str, None, None]:
+    modes = PROMPTS.get('reply_generator', {}).get('modes', {})
+    mode_name = modes.get(mode_id, {}).get("name", "未知模式")
+    log_callback(f"--- 使用模型 {model_name} 和 “{mode_name}”模式优化已有回复 ---")
+    try:
+        prompt = build_reply_optimizer_prompt(discussion_text, analysis_summary, mode_id, reply_draft, custom_input)
+    except Exception as e:
+        yield f"构建优化Prompt失败: {e}"
+        return
+
+    generation_config = {"response_mime_type": "text/plain"}
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+
+    try:
+        log_callback("正在调用 Gemini API 流式优化回复...")
+        response_stream = client.models.generate_content_stream(model=model_name, contents=contents, config=generation_config)
+        for chunk in response_stream:
+            if hasattr(chunk, 'text') and chunk.text:
+                yield chunk.text
+        log_callback("Gemini API 回复优化成功。")
+    except Exception as e:
+        log_callback(f"Gemini API 回复优化失败: {e}")
+        yield f"优化回复失败: {e}"
 
 _DEFAULT_MODE_IDS = None
 

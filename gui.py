@@ -579,7 +579,7 @@ class TiebaGPTApp:
         elif env_key:
             self.api_key_input.value = env_key; self.api_key_input.hint_text = "已从环境变量加载 (若保存将写入配置文件)"; self.save_api_key_switch.value = False
         else:
-            self.api_key_input.value = ""; self.api_key_input.hint_text = "请输入您的 API Key"; self.save_api_key_switch.value = False
+            self.api_key_input.hint_text = "请输入您的 API Key"; self.save_api_key_switch.value = False
         self.color_seed_input.value = self.settings.get("color_scheme_seed", "blue")
         self.pages_per_call_slider.value = self.settings.get("pages_per_api_call", 4)
         self._rebuild_model_dropdowns(self.settings.get("available_models"))
@@ -788,18 +788,28 @@ class TiebaGPTApp:
             if not custom_input: self.log_message("使用此自定义模型时，自定义内容不能为空！", LogLevel.WARNING); return
         self.generate_reply_ring.visible = True; self.generate_button.disabled = True; self.optimize_button.disabled = True
         self.copy_button.disabled = True; self.reply_display.value = f"⏳ {action_name}中，请稍候..."; self.page.update()
-        generated_reply = await core_function(self.gemini_client, self.discussion_text, cached_analysis["summary"], self.current_mode_id, self.settings["generator_model"], self.log_message, custom_input=custom_input, **kwargs)
-        self.reply_display.value = generated_reply; self.generate_reply_ring.visible = False; self.generate_button.disabled = False
-        self._update_optimize_button_state(); self.copy_button.disabled = not bool(generated_reply); self.page.update()
+        await asyncio.sleep(0.01)
+        generated_reply = ""
+        try:
+            generated_chunks = await asyncio.to_thread(core_function, self.gemini_client, self.discussion_text, cached_analysis["summary"], self.current_mode_id, self.settings["generator_model"], self.log_message, custom_input=custom_input, **kwargs)
+            first_chunk = True
+            for chunk in generated_chunks:
+                if first_chunk: generated_reply = ""; first_chunk = False
+                generated_reply += chunk; self.reply_display.value = generated_reply + " ▌"; self.page.update(); await asyncio.sleep(0.001)
+        except Exception as e:
+            self.log_message(f"处理回复流时发生错误: {e}", LogLevel.ERROR); generated_reply = f"处理回复流时出错: {e}"
 
-    async def generate_reply_click(self, e): await self._execute_ai_reply_action(core.generate_reply, "生成")
+        self.reply_display.value = generated_reply; self.generate_reply_ring.visible = False; self.generate_button.disabled = False
+        self._update_optimize_button_state(); self.copy_button.disabled = not bool(generated_reply.strip()); self.page.update()
+
+    async def generate_reply_click(self, e): await self._execute_ai_reply_action(core.generate_reply_stream, "生成")
     async def optimize_reply_click(self, e):
         reply_draft = self.reply_draft_input.value.strip()
         if not reply_draft and self.reply_display.value:
             self.log_message("优化草稿为空，自动使用已有回复进行优化。"); reply_draft = self.reply_display.value.strip()
             self.reply_draft_input.value = reply_draft; self.page.update()
         if not reply_draft: self.log_message("错误：没有可供优化的内容。", LogLevel.ERROR); return
-        await self._execute_ai_reply_action(core.optimize_reply, "优化", reply_draft=reply_draft)
+        await self._execute_ai_reply_action(core.optimize_reply_stream, "优化", reply_draft=reply_draft)
 
     def _update_optimize_button_state(self):
         has_draft = bool(self.reply_draft_input.value and self.reply_draft_input.value.strip())
