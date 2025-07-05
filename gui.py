@@ -49,6 +49,7 @@ class TiebaGPTApp:
         self.current_post_page = 1
         self.total_post_pages = 1
         self.blinking_cursor_task = None
+        self.is_ai_generating = False
 
         # --- UI 控件 ---
         # -- 导航 --
@@ -827,6 +828,7 @@ class TiebaGPTApp:
                 self.page.update()
 
     async def _execute_ai_reply_action(self, core_function, action_name: str, **kwargs):
+        self.is_ai_generating = True
         cached_analysis = self.analysis_cache.get(self.selected_thread.tid)
         if not cached_analysis or "summary" not in cached_analysis:
             self.log_message(f"错误：未找到当前帖子的分析摘要，无法{action_name}回复。", LogLevel.ERROR); return
@@ -851,6 +853,7 @@ class TiebaGPTApp:
             **kwargs
         }
         await asyncio.to_thread(self._stream_and_update_worker, core_function, core_args)
+        self.is_ai_generating = False
 
     async def generate_reply_click(self, e): await self._execute_ai_reply_action(core.generate_reply_stream, "生成")
     async def optimize_reply_click(self, e):
@@ -864,10 +867,12 @@ class TiebaGPTApp:
     def _update_optimize_button_state(self):
         has_draft = bool(self.reply_draft_input.value and self.reply_draft_input.value.strip())
         has_existing_reply = bool(self.reply_display.value and self.reply_display.value.strip() and "⏳" not in self.reply_display.value)
-        self.optimize_button.disabled = not (has_draft or has_existing_reply)
+        has_valid_analysis = self.selected_thread is not None and self.current_analysis_tid == self.selected_thread.tid
+        self.optimize_button.disabled = not ((has_draft or has_existing_reply) and has_valid_analysis)
         if self.page: self.page.update()
 
-    def on_draft_input_change(self, e): self._update_optimize_button_state()
+    def on_draft_input_change(self, e): 
+        if not self.is_ai_generating: self._update_optimize_button_state()
 
     async def search_tieba(self, e):
         if not self.tieba_name_input.value.strip(): self.log_message("贴吧名称不能为空，请先输入。", level=LogLevel.WARNING); return

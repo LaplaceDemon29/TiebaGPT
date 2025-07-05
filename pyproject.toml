@@ -1,0 +1,20 @@
+[project]
+name = "TiebaGPT"
+version = "1.5.5"
+description = ""
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "LaplaceDemon29", email = "LaplaceDemon@notexists.io" }
+]
+dependencies = [
+  "flet",
+  "google-genai",
+  "aiotieba"
+]
+
+[tool.flet]
+org = "io.LaplaceDemon"
+product = "TiebaGPT"
+company = "LaplaceDemon29"
+copyright = "Copyright (C) 2025 by LaplaceDemon29"
