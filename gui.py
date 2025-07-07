@@ -725,6 +725,7 @@ class TiebaGPTApp:
         
         self.mode_selector.disabled = False
         self.generate_button.disabled = not (self.current_analysis_tid == self.selected_thread.tid)
+        self._update_optimize_button_state()
         self.analyze_button.disabled = False
         await self._load_and_display_post_page(True)
     
@@ -779,14 +780,14 @@ class TiebaGPTApp:
 
     async def analyze_thread_click(self, e):
         current_tid = self.selected_thread.tid
-        self.analyze_button.disabled = True; self.generate_button.disabled = True
+        self.analyze_button.disabled = True; self.generate_button.disabled = True; self.optimize_button.disabled = True
         self.analysis_display.value = "⏳ 开始分批次分析，请稍候..."; self.analysis_progress_bar.visible = True; self.analysis_progress_bar.value = 0; self.page.update()
         async with tb.Client() as tieba_client:
             self.analysis_result = await core.analyze_stance_by_page(tieba_client, self.gemini_client, current_tid, self.total_post_pages, self.settings["analyzer_model"], self.log_message, self._update_analysis_progress, self.settings.get("pages_per_api_call", 4))
         self.analysis_progress_bar.visible = False; self.analyze_button.disabled = False
         if "summary" in self.analysis_result:
             self.analysis_cache[current_tid] = self.analysis_result; self.current_analysis_tid = current_tid
-            self.analysis_display.value = f"## 讨论状况摘要\n\n{self.analysis_result['summary']}"; self.generate_button.disabled = False
+            self.analysis_display.value = f"## 讨论状况摘要\n\n{self.analysis_result['summary']}"; self.generate_button.disabled = False; self._update_optimize_button_state()
         else: self.analysis_display.value = f"❌ 分析失败:\n\n{self.analysis_result.get('error', '未知错误')}"
         self.page.update()
 

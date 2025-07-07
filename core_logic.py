@@ -12,7 +12,7 @@ from aiotieba import typing as tb_typing
 from google import genai
 from google.genai import types
 
-VERSION = "1.5.5"
+VERSION = "1.5.6"
 POSTS_PER_PAGE = 30
 DEFAULT_PROMPTS_FILENAME = "prompts.default.json"
 README_FILE = "README.md"
